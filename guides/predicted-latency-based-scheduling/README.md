@@ -5,7 +5,7 @@
 
 > **How it works (high level)**  
 > This guide enables **prediction‑based scheduling**: the EPP calls in‑pod **latency predictor sidecars** to estimate **p90 TTFT** and **p90 TPOT** for each candidate pod using live features (KV‑cache %, input length, waiting/running counts, prefix‑overlap score, etc.). The **SLO scorer** then routes requests to pods with **positive headroom** vs the request’s SLOs.  
-> - Turn it on per request with the header **`x-prediction-based-scheduling: true`** (or `x-prediction-based-scheduling: true`).  
+> - Turn it on per request with the header **`x-prediction-based-scheduling: true`.  
 > - If enabled **without SLOs**, it assumes SLO=0 and picks the **lowest‑latency** destination.  
 > - Models are trained online from **streaming** observations; For observability, **TPOT is sampled every 200th token** and both predictions and actuals are surfaced at the end of the stream for validation.
 
@@ -195,7 +195,6 @@ This choice is applied alongside the bucket’s weighted‑random selection and 
 
 To turn on SLO‑aware routing *for a given request*, set the **prediction-based scheduling** header.
 
-### Header
 ### Header
 - `x-prediction-based-scheduling: true`
 
