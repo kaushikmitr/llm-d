@@ -285,7 +285,7 @@ data: [DONE]
 
 5) **Send traffic**
    - Baseline: run with the **`default`** profile.
-   - SLO‑aware: run with the **`slo`** profile, set `x-prediction-based-scheduling: true`, and optionally include SLOs (headers or JSON body).
+   - SLO‑aware: run with the **`slo`** profile, set `x-prediction-based-scheduling: true`, and optionally include SLOs headers.
 
 ---
 
