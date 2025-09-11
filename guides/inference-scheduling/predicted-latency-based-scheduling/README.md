@@ -73,7 +73,7 @@ EPP schedules requests. The two latency sidecar types sit **next to** EPP in the
 ## Sidecars & EPP containers in the Deployment
 
 ### EPP container
-- **Image**: `epp-wlp-latencypredictor`
+- **Image**: `epp`
 - **Args**
   - `--config-file=/config/default-plugins.yaml` (enables profiles below)
   - `-enable-latency-predictor` (turns on the async predictor client in EPP)
