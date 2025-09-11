@@ -49,6 +49,7 @@ This guide explains how to deploy EPP with latency predictor sidecars, configure
 
 ## Testing this well-lit path
 
+<<<<<<< HEAD:guides/predicted-latency-based-scheduling/README.md
 Once prerequisites are met, you can validate predicted latency based scheduling:
 
 1. **Apply your InferencePool/EPP manifest**  
@@ -161,6 +162,9 @@ This section details the container setup, ConfigMaps, and profile configuration 
 ### Sidecars & EPP containers in the Deployment
 
 **EPP container**
+=======
+### EPP container
+>>>>>>> 47a493e (move wlp location):guides/inference-scheduling/predicted-latency-based-scheduling/README.md
 - **Image**: `epp`
 - **Args**
   - `--config-file=/config/default-plugins.yaml`
