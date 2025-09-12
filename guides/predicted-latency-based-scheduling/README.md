@@ -2,9 +2,9 @@
 
 ## Overview
 
-This feature introduces **predicted latency based load balancing**, where scheduling decisions are guided by real-time predictions of request latency rather than only static metrics like queue depth or KV-cache utilization.
+This feature introduces **predicted latency based load balancing**, where scheduling decisions are guided by real-time predictions of request latency rather than only utilization metrics like queue depth or KV-cache utilization.
 
-- **Problem:** Purely reactive metrics can misroute traffic under bursty, mixed workloads, leading to **SLO violations** (slow TTFT spikes, tail TPOT) or overly conservative routing that wastes capacity.  
+- **Problem:** Utilization metrics can misroute traffic under bursty, mixed workloads, leading to **SLO violations** (slow TTFT spikes, tail TPOT) or overly conservative routing that wastes capacity.  
 - **Approach:** The Endpoint Picker (EPP) integrates with **in-pod latency predictor sidecars** that continuously learn from live traffic. These sidecars estimate **p90 TTFT** and **p90 TPOT** for each candidate pod given current load, cache state, and request features.  
 - **Outcome:** The **SLO scorer** compares predictions against per-request SLOs and directs traffic to pods with positive headroom. When no SLOs are provided, it defaults to minimizing latency.  
 ### Tradeoffs & Gaps
