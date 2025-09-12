@@ -281,19 +281,122 @@ Turn on SLO-aware routing per request with the header:
 x-prediction-based-scheduling: true
 ```
 
-- If **SLO headers are present**: predictions are compared against thresholds.  
-- If **no SLOs** are provided: treated as SLO=0 → lowest latency pod is chosen.  
-- If **priority < 0** and **no pod can meet SLOs**: request is **shed** instead of placed in the negative bucket.  
+### Behavior
+- If **enabled** and **SLO headers are present** (e.g., `X-SLO-TTFT`, `X-SLO-TPOT`), the SLO scorer compares predicted TTFT/TPOT to those thresholds.
+- If **enabled** but **no SLO headers are provided**, it assumes **SLO = 0** and routes to **minimize latency** (i.e., “best‑effort lowest latency” behavior).
+- If **disabled**, routing falls back to the active profile (e.g., `default` queue/kv‑util scoring).
 
-**Current limitations**
-- Percentile: only **p90** supported.  
-- Training: only **streaming mode** supported.  
-- TPOT sampling: for obsevability, every 200th token is logged and compared with predictions.  
+### Percentile & training mode (current status)
+- **Only one percentile is supported right now: p90** (used for quantile predictions). Working toward making it **configurable**.
+- **Model training is currently wired for streaming mode** (continuous token streaming), and uses streamed observations to build/update the training set.
+- **TPOT sampling:** during streaming we record TPOT at a fixed sampling stride (**every 200th generated token**) and surface those samples in responses.
 
 ---
 
-## Cleanup
+## Sample request/response (SSE)
 
-To remove the resources you created in this walkthrough, follow the same cleanup instructions from the [Inference Gateway Extension guide](https://gateway-api-inference-extension.sigs.k8s.io/guides/#cleanup).  
+### Request
+```bash
+curl -v $GW_IP/v1/completions   -H 'Content-Type: application/json'   -H 'x-prediction-based-scheduling: true'   -d '{
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "prompt": "what is the difference between a Franz and Apache Kafka?",
+    "max_tokens": 200,
+    "temperature": 0,
+    "stream_options": {"inlcude_usage": "true"},
+    "stream": "true",
+    "slo": {
+      "ttft_ms": 250,    // optional
+      "tpot_ms": 100     // optional
+    }
+  }'
+```
 
-That section covers how to delete the InferencePool, ConfigMaps, and supporting resources you applied here. The steps are identical — only the EPP image and sidecar configuration differ.
+> You may also send the SLOs via headers if your setup prefers that style (e.g., `X-SLO-TTFT`, `X-SLO-TPOT`).
+
+### Response (abridged SSE)
+```
+< HTTP/1.1 200 OK
+< content-type: text/event-stream; charset=utf-8
+...
+data: {"choices":[{"index":0,"text":" Apache"}], "object":"text_completion", ...}
+data: {"choices":[{"index":0,"text":" Kafka"}],  "object":"text_completion", ...}
+... (many streamed tokens) ...
+data: {
+  "object":"text_completion",
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 200,
+    "total_tokens": 212,
+    "ttft_ms": 59,
+    "tpot_observations_ms": [9, 6],
+    "avg_tpot_ms": 7.5,
+    "predicted_ttft_ms": 273.23,
+    "predicted_tpot_observations_ms": [176.22, 18.17],
+    "avg_predicted_tpot_ms": 97.19
+  }
+}
+data: [DONE]
+```
+
+**Notes**
+- The final SSE frame includes **both predictions and actuals** so you can validate accuracy (e.g., `predicted_ttft_ms` vs `ttft_ms`, predicted TPOT vs observed TPOT).
+- **TPOTs are sampled** (every **200th** token) — the arrays like `tpot_observations_ms` and `predicted_tpot_observations_ms` reflect those sampled tokens rather than every single token.
+
+---
+
+## Deployment flow
+
+1) **Install the Inference Gateway extension**  
+   Follow the official steps here:  
+   https://gateway-api-inference-extension.sigs.k8s.io/guides/
+
+2) **Build your EPP image** from the experimental branch (contains SLO prediction code paths & sidecars):  
+   https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/slo-prediction-experimental
+
+3) **Apply your InferencePool/EPP YAML** (the one shown earlier), updating the EPP container **image** to the one you just built.  
+   - The YAML already defines:
+     - The `Service` exposing EPP gRPC (9002), training (8000), predictors (8001–8003), and Prometheus (9090).
+     - The `Deployment` with EPP + training + 3×prediction sidecars, each with their own volumes.
+     - The `plugins-config` ConfigMap with `default` and `slo` profiles.
+     - RBAC and bindings needed by EPP.
+
+4) **Confirm readiness**
+   - `kubectl get pods` – EPP Pod should be `Running/Ready`.
+   - Training sidecar: `/readyz` on **8000**.
+   - Each predictor: `/readyz` on **8001/8002/8003**.
+   - EPP gRPC health: port **9003** (liveness/readiness probes).
+
+5) **Send traffic**
+   - Baseline: run with the **`default`** profile.
+   - SLO‑aware: run with the **`slo`** profile, set `x-prediction-based-scheduling: true`, and optionally include SLOs headers.
+
+---
+
+## Minimal “it works” checklist
+
+- [ ] Installed the Inference Gateway from the official guide.
+- [ ] Built and pushed your EPP image from the **slo-prediction-experimental** branch.
+- [ ] Applied the YAML with your image reference.
+- [ ] Training/predictors are **Ready**; EPP health probes green.
+- [ ] Requests with prediction‑based scheduling enabled route via the **`slo`** profile and show positive/negative bucket decisions in logs/metrics.
+
+---
+
+
+
+---
+
+## Example EPP YAML
+
+For a ready-to-use manifest, see the example here (experimental branch):
+
+- **Example EPP YAML:** https://github.com/kubernetes-sigs/gateway-api-inference-extension/blob/slo-prediction-experimental/config/manifests/inferencepool-resources.yaml
+
+
+## References
+
+- **Gateway API Inference Extension (SLO Prediction – experimental branch):**  
+  https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/slo-prediction-experimental
+
+- **Design Doc (Prediction-based scheduling / SLO-aware routing):**  
+  https://docs.google.com/document/d/1q56wr3N5XGx0B21MzHu5oBsCiGi9VrbZAvyhP2VFG_c/edit?tab=t.vq4xxydkz7ze#heading=h.bckmljf2iw8n
