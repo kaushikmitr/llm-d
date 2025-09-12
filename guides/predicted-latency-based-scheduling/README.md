@@ -282,7 +282,7 @@ x-prediction-based-scheduling: true
 ```
 
 ### Behavior
-- If **enabled** and **SLO headers are present** (e.g., `x-SLO-TTFT`, `x-SLO-TPOT`), the SLO scorer compares predicted TTFT/TPOT to those thresholds.
+- If **enabled** and **SLO headers are present** (e.g., `x-SLO-TTFT-ms`, `x-SLO-TPOT-ms`), the SLO scorer compares predicted TTFT/TPOT to those thresholds.
 - If **enabled** but **no SLO headers are provided**, it assumes **SLO = 0** and routes to **minimize latency** (i.e., “best‑effort lowest latency” behavior).
 - If **disabled**, routing falls back to the active profile (e.g., `default` queue/kv‑util scoring).
 
@@ -297,7 +297,7 @@ x-prediction-based-scheduling: true
 
 ### Request
 ```bash
-curl -v $GW_IP/v1/completions   -H 'Content-Type: application/json'   -H 'x-prediction-based-scheduling: true' -H 'x-SLO-TTFT: 200' -H 'x-SLO-TPOT: 50'   -d '{
+curl -v $GW_IP/v1/completions   -H 'Content-Type: application/json'   -H 'x-prediction-based-scheduling: true' -H 'x-SLO-TTFT-ms: 200' -H 'x-SLO-TPOT-ms: 50'   -d '{
     "model": "meta-llama/Llama-3.1-8B-Instruct",
     "prompt": "what is the difference between a Franz and Apache Kafka?",
     "max_tokens": 200,
