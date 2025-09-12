@@ -1,170 +1,78 @@
 # Feature: Predicted Latency based Load Balancing
 
-## Overview
+> **What problem does this solve?**  
+> Modern LLM serving needs to meet per‑request **latency SLOs** (e.g., TTFT ≤ _X_ ms, TPOT ≤ _Y_ ms) while pools are under mixed, bursty load. Only looking at queue depth or KV‑cache utilization may **misroute** traffic, causing SLO violations (slow TTFT spikes, tail TPOT) or over‑conservative placement that wastes capacity.
 
-This feature introduces **predicted latency based load balancing**, where scheduling decisions are guided by real-time predictions of request latency rather than only utilization metrics like queue depth or KV-cache utilization.
-
-- **Problem:** Utilization-based load balancing misses the distinct characteristics of LLM workloads, leading to requests missing SLO targets or overly conservative routing that wastes capacity. 
-- **Approach:** The Endpoint Picker (EPP) integrates with **in-pod latency predictor sidecars** that continuously learn from live traffic. These sidecars estimate **p90 TTFT** and **p90 TPOT** for each candidate pod given current load, prefix cache state, and request features.  
-- **Outcome:** The **SLO scorer** compares predictions against per-request SLOs and directs traffic to pods with positive headroom. If none exist, requests are shed (priority < 0) or sent to a weighted pool favoring lower latency pods.
-### Tradeoffs & Gaps
-
-- **Homogeneous pool assumption**  
-  Current predictors assume that all model server pods are identical (same GPU type, model weights, and serving configuration). Heterogeneous pools are not yet modeled.  
-
-- **Prediction QPS scaling**  
-  Each prediction sidecar can sustain ~300 QPS on a c4-standard-192 machine. Because the EPP makes one prediction call per candidate pod, total prediction load grows with both **cluster QPS** and **pod count**. If traffic or pod count increases, prediction servers must be scaled horizontally.  
-
-- **Training mode**  
-  Only streaming workloads (set **"stream": "true"** in the request body as per openAI protocol) are supported for training.  
-
-- **Percentiles**  
-  The predictor currently estimates only **p90** TTFT and TPOT. Other percentiles (p95, p99) or a mix of percentiles not yet available.  
-
-- **Prefill/Decode disaggregation**  
-    Current routing does **not support prefill/decode disaggregation** (where one pod performs prefill and another performs decode). Prediction and SLO scoring assume a pod executes the entire request lifecycle. Support for disaggregated serving is a **work in progress**.  
+> **How it works (high level)**  
+> This guide enables **prediction‑based scheduling**: the EPP calls in‑pod **latency predictor sidecars** to estimate **p90 TTFT** and **p90 TPOT** for each candidate pod using live features (KV‑cache %, input length, waiting/running counts, prefix‑overlap score, etc.). The **SLO scorer** then routes requests to pods with **positive headroom** vs the request’s SLOs.  
+> - Turn it on per request with the header **`x-prediction-based-scheduling: true`**.  
+> - If enabled **without SLOs**, it assumes SLO=0 and picks the **lowest‑latency** destination.  
+> - Models are trained online from **streaming** observations; For observability, **TPOT is sampled every 200th token** and both predictions and actuals are surfaced at the end of the stream for validation.
 
 
-### What is Tested
 
-This feature has been validated against the scenarios described in the [original design doc](https://docs.google.com/document/d/1q56wr3N5XGx0B21MzHu5oBsCiGi9VrbZAvyhP2VFG_c/edit?tab=t.0#heading=h.ob7j9esmcyd3) — including **short-prompt/long-completion**, **long-prompt/short-completion**, and **mixed workloads** — to compare baseline inference gateway routing versus prediction-based SLO routing. The benchmarking results are included in this doc.
-
-This guide explains how to deploy EPP with latency predictor sidecars, configure profiles and scorers, and enable **SLO-aware routing** via headers.  
+This guide shows how to run the Endpoint Picker (EPP) with **one training** and **three prediction** sidecars, and how to enable **SLO‑aware routing** via the `plugins-config` profiles.
 
 ---
 
-## Prerequisites
+## What the sidecars do (and how they fit together)
 
-- **Install the Inference Gateway extension**  
-  Follow the official installation steps here:  
-  https://gateway-api-inference-extension.sigs.k8s.io/guides/
+EPP schedules requests. The two latency sidecar types sit **next to** EPP in the same Pod and provide prediction + training services that EPP calls over `localhost`:
 
-- **Build your EPP image** from the experimental branch (includes SLO prediction code paths & sidecars):  
-  https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/slo-prediction-experimental
+### 1) Training sidecar (`training-server`, port **8000**)
 
-- **Build your EPP Sidecars** from the same experimental branch: 
-  https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/slo-prediction-experimental/latencypredictor-v1
+**Purpose**
+- Collects latency samples (TTFT, TPOT) sent by EPP during streaming.
+- Periodically **re‑trains** the TTFT/TPOT models when enough new samples arrive.
+- Publishes fresh model artifacts for predictors to fetch.
 
----
+**API**
+- `POST /sample` – ingest latency samples (bulk buffered by EPP).
+- `GET  /model/{name}/info` – current model metadata (versions, timestamps, counts).
+- `GET  /model/{name}/download` – model artifact binaries (e.g., `.joblib`).
+- `GET  /status` – basic readiness / buffer depth.
+- Health probes: `/healthz`, `/readyz`.
 
-## Testing this well-lit path
+**Config & storage**
+- Controlled by `latency-predictor-config` (see below).
+- Writes artifacts to its **own** volume (`/models`) so predictors can sync from it.
+- Retraining knobs:
+  - `LATENCY_RETRAINING_INTERVAL_SEC`
+  - `LATENCY_MIN_SAMPLES_FOR_RETRAIN`
+  - `LATENCY_MAX_TRAINING_DATA_SIZE_PER_BUCKET`
 
-<<<<<<< HEAD:guides/predicted-latency-based-scheduling/README.md
-Once prerequisites are met, you can validate predicted latency based scheduling:
+### 2) Prediction sidecars (`prediction-server-1/2/3`, ports **8001/8002/8003**)
 
-1. **Apply your InferencePool/EPP manifest**  
-   - Consult the example manifest shown [here](https://github.com/kubernetes-sigs/gateway-api-inference-extension/blob/slo-prediction-experimental/config/manifests/inferencepool-resources-lp.yaml)
-   - Update the EPP container and sidecar images to the ones you built.  
-   - Confirm that the `Deployment` includes the EPP container, training sidecar, and three prediction sidecars, each with their own volumes.  
-   - Ensure the `plugins-config` ConfigMap defines both `default` and `slo` profiles.  
+**Purpose**
+- Serve low‑latency **predictions** of TTFT/TPOT for a given request + pod state.
+- Keep an up‑to‑date **local copy** of model artifacts, synced from the training sidecar.
 
-2. **Check readiness**  
-   - Verify pod status: `kubectl get pods` → all containers `Running/Ready`.  
-   - Training sidecar health: `curl http://<pod-ip>:8000/readyz`  
-   - Prediction sidecar health: `curl http://<pod-ip>:8001/readyz` (and 8002, 8003).  
-   - EPP gRPC health: port `9003` (liveness/readiness probes).  
+**API**
+- `POST /predict` – returns `{ ttft_ms, tpot_ms, uncertainty }`.
+- `GET  /status`, `/healthz`, `/readyz` – health + basic info.
+- `POST /reload` – manual artifact reload if needed.
 
-3. **Send traffic**  
-   - **Baseline:** run requests using the **`default`** profile (no prediction headers).  
-   - **SLO-aware:** run requests with the **`slo`** profile and set  
-     `x-prediction-based-scheduling: true`, optionally adding SLO headers like `x-slo-ttft-ms` and `x-slo-tpot-ms`.  
+**Config & storage**
+- Controlled by `prediction-server-config` (see below).
+- Each predictor uses its **own** volume at `/server_models` (one per container)
+  to avoid contention; a background syncer refreshes local artifacts when the
+  training sidecar publishes a new version.
+- Typical model type: **XGBoost** (quantile p90 for SLO‑aware routing).
 
-   Example request:
-   ```bash
-   curl -v $GW_IP/v1/completions \
-     -H 'Content-Type: application/json' \
-     -H 'x-prediction-based-scheduling: true' \
-     -H 'x-slo-ttft-ms: 200' \
-     -H 'x-slo-tpot-ms: 50' \
-     -d '{
-       "model": "meta-llama/Llama-3.1-8B-Instruct",
-       "prompt": "what is the difference between Franz and Apache Kafka?",
-       "max_tokens": 200,
-       "temperature": 0,
-       "stream_options": {"include_usage": "true"},
-       "stream": "true"
-     }'
-   ```
+### How EPP uses the sidecars
 
-   Example response (abridged SSE):
-   ```
-   < HTTP/1.1 200 OK
-   < content-type: text/event-stream; charset=utf-8
-   ...
-   data: {"choices":[{"index":0,"text":" Apache"}], "object":"text_completion", ...}
-   data: {"choices":[{"index":0,"text":" Kafka"}],  "object":"text_completion", ...}
-   ... (many streamed tokens) ...
-   data: {
-     "object":"text_completion",
-     "usage": {
-       "prompt_tokens": 12,
-       "completion_tokens": 200,
-       "total_tokens": 212,
-       "ttft_ms": 59,
-       "tpot_observations_ms": [9, 6],
-       "avg_tpot_ms": 7.5,
-       "predicted_ttft_ms": 273.23,
-       "predicted_tpot_observations_ms": [176.22, 18.17],
-       "avg_predicted_tpot_ms": 97.19
-     }
-   }
-   data: [DONE]
-   ```
-
-   - The final SSE frame includes both **predictions and actuals** so you can validate accuracy (e.g., `predicted_ttft_ms` vs `ttft_ms`).  
-   - TPOTs are sampled every 200th token and surfaced in the arrays like `tpot_observations_ms`.  
-
-4. **Validate predictions in logs**  
-   Tail EPP logs at verbosity `-v=4`. For each request you should see:
-
-   - **Profile selection**  
-     ```
-     msg:"Running profile handler, Pick profiles"
-     plugin:"slo-aware-profile-handler/slo-aware-profile-handler"
-     ```
-
-   - **Candidate pods**  
-     ```
-     msg:"Before running scorer plugins"
-     pods:[{... "pod_name":"...-5k7qr" ...}, {... "pod_name":"...-9lp5g" ...}]
-     ```
-
-   - **SLO scorer pod scores**  
-     ```
-     msg:"Pod score"
-     scorer_type:"slo-scorer"
-     pod_name:"vllm-llama3-8b-instruct-7b584dd595-9b4wt"
-     score:0.82
-     ```
-
-   - **Final pick**  
-     ```
-     msg:"Picked endpoint"
-     scorer_type:"slo-scorer"
-     selected_pod:"vllm-llama3-8b-instruct-7b584dd595-9b4wt"
-     ```
-
-   These logs confirm:  
-   - The request entered the SLO-aware path.  
-   - All candidate pods were evaluated.  
-   - Scores reflect predicted headroom vs SLOs.  
-   - The final pod was chosen based on SLO scorer output.
-
-5. **Confirm request shedding (optional)**  
-   If you send requests with **priority < 0** and no pod can meet both TTFT & TPOT SLOs, logs should show the request being **shed** instead of placed in the negative bucket.
+- When a request is being **scheduled**, EPP queries one of the predictor sidecars
+  on `localhost:{8001|8002|8003}` to estimate per‑pod TTFT/TPOT under current load.
+- EPP compares predictions against the request’s SLOs and pod’s strictest running SLO,
+  then routes using the **SLO scorer** (positive/negative buckets + weighted choice).
+- During streaming, EPP buffers **observed** latency samples and periodically bulk‑posts
+  them to the training sidecar’s `/sample`, closing the loop for continual learning.
 
 ---
 
-## Configuration
+## Sidecars & EPP containers in the Deployment
 
-This section details the container setup, ConfigMaps, and profile configuration needed to enable prediction-based scheduling.
-
-### Sidecars & EPP containers in the Deployment
-
-**EPP container**
-=======
 ### EPP container
->>>>>>> 47a493e (move wlp location):guides/inference-scheduling/predicted-latency-based-scheduling/README.md
 - **Image**: `epp`
 - **Args**
   - `--config-file=/config/default-plugins.yaml`
@@ -303,7 +211,7 @@ x-prediction-based-scheduling: true
 ```bash
 curl -v $GW_IP/v1/completions   -H 'Content-Type: application/json'   -H 'x-prediction-based-scheduling: true' -H 'x-SLO-TTFT-ms: 200' -H 'x-SLO-TPOT-ms: 50'   -d '{
     "model": "meta-llama/Llama-3.1-8B-Instruct",
-    "prompt": "what is the difference between a Franz and Apache Kafka?",
+    "prompt": "what is the difference between Franz and Apache Kafka?",
     "max_tokens": 200,
     "temperature": 0,
     "stream_options": {"inlcude_usage": "true"},
