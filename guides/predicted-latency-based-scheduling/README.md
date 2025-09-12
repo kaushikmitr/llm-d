@@ -286,6 +286,10 @@ x-prediction-based-scheduling: true
 - If **enabled** but **no SLO headers are provided**, it assumes **SLO = 0** and routes to **minimize latency** (i.e., “best‑effort lowest latency” behavior).
 - If **disabled**, routing falls back to the active profile (e.g., `default` queue/kv‑util scoring).
 
+#### Behavior at saturation
+
+- If the request has **priority < 0** and **no pod can meet both SLOs** (TTFT & TPOT and the pod’s strictest running TPOT SLO), the request is **shed (not scheduled)** instead of being placed in the negative bucket.
+
 ### Percentile & training mode (current status)
 - **Only one percentile is supported right now: p90** (used for quantile predictions). Working toward making it **configurable**.
 - **Model training is currently wired for streaming mode** (continuous token streaming), and uses streamed observations to build/update the training set.
