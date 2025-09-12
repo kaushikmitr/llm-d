@@ -1,4 +1,4 @@
-# Well-lit Path: Predicted Latency based Load Balancing
+# Feature: Predicted Latency based Load Balancing
 
 > **What problem does this solve?**  
 > Modern LLM serving needs to meet per‑request **latency SLOs** (e.g., TTFT ≤ _X_ ms, TPOT ≤ _Y_ ms) while pools are under mixed, bursty load. Only looking at queue depth or KV‑cache utilization may **misroute** traffic, causing SLO violations (slow TTFT spikes, tail TPOT) or over‑conservative placement that wastes capacity.
