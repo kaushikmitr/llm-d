@@ -168,7 +168,7 @@ schedulingProfiles:
 
 ### Choosing a profile
 - **`default`** – queue + kv‑util scoring only.
-- **`slo`** – enable SLO‑aware routing; send headers like `X-SLO-TTFT` and `X-SLO-TPOT`.
+- **`slo`** – enable SLO‑aware routing; send headers like `x-SLO-TTFT` and `x-SLO-TPOT`.
 
 
 ### Headroom strategies (positive bucket)
@@ -199,7 +199,7 @@ To turn on SLO‑aware routing *for a given request*, set the **prediction-based
 - `x-prediction-based-scheduling: true`
 
 ### Behavior
-- If **enabled** and **SLO headers are present** (e.g., `X-SLO-TTFT`, `X-SLO-TPOT`), the SLO scorer compares predicted TTFT/TPOT to those thresholds.
+- If **enabled** and **SLO headers are present** (e.g., `x-SLO-TTFT`, `x-SLO-TPOT`), the SLO scorer compares predicted TTFT/TPOT to those thresholds.
 - If **enabled** but **no SLO headers are provided**, it assumes **SLO = 0** and routes to **minimize latency** (i.e., “best‑effort lowest latency” behavior).
 - If **disabled**, routing falls back to the active profile (e.g., `default` queue/kv‑util scoring).
 
@@ -214,7 +214,7 @@ To turn on SLO‑aware routing *for a given request*, set the **prediction-based
 
 ### Request
 ```bash
-curl -v $GW_IP/v1/completions   -H 'Content-Type: application/json'   -H 'x-prediction-based-scheduling: true' -H 'X-TTFT-SLO: 200' -H 'X-TPOT-SLO: 50'   -d '{
+curl -v $GW_IP/v1/completions   -H 'Content-Type: application/json'   -H 'x-prediction-based-scheduling: true' -H 'x-SLO-TTFT: 200' -H 'x-SLO-TPOT: 50'   -d '{
     "model": "meta-llama/Llama-3.1-8B-Instruct",
     "prompt": "what is the difference between Franz and Apache Kafka?",
     "max_tokens": 200,
