@@ -214,21 +214,15 @@ To turn on SLO‑aware routing *for a given request*, set the **prediction-based
 
 ### Request
 ```bash
-curl -v $GW_IP/v1/completions   -H 'Content-Type: application/json'   -H 'x-prediction-based-scheduling: true'   -d '{
+curl -v $GW_IP/v1/completions   -H 'Content-Type: application/json'   -H 'x-prediction-based-scheduling: true' -H 'X-TTFT-SLO: 200' -H 'X-TPOT-SLO: 50'   -d '{
     "model": "meta-llama/Llama-3.1-8B-Instruct",
     "prompt": "what is the difference between Franz and Apache Kafka?",
     "max_tokens": 200,
     "temperature": 0,
     "stream_options": {"inlcude_usage": "true"},
     "stream": "true",
-    "slo": {
-      "ttft_ms": 250,    // optional
-      "tpot_ms": 100     // optional
-    }
   }'
 ```
-
-> You may also send the SLOs via headers if your setup prefers that style (e.g., `X-SLO-TTFT`, `X-SLO-TPOT`).
 
 ### Response (abridged SSE)
 ```
