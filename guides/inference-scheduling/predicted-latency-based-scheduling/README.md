@@ -216,7 +216,7 @@ To turn on SLO‑aware routing *for a given request*, set the **prediction-based
 ```bash
 curl -v $GW_IP/v1/completions   -H 'Content-Type: application/json'   -H 'x-prediction-based-scheduling: true'   -d '{
     "model": "meta-llama/Llama-3.1-8B-Instruct",
-    "prompt": "what is the difference between a Franz and Apache Kafka?",
+    "prompt": "what is the difference between Franz and Apache Kafka?",
     "max_tokens": 200,
     "temperature": 0,
     "stream_options": {"inlcude_usage": "true"},
