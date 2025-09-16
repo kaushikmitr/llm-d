@@ -4,7 +4,7 @@
 
 This feature introduces **predicted latency based load balancing**, where scheduling decisions are guided by real-time predictions of request latency rather than only utilization metrics like queue depth or KV-cache utilization.
 
-- **Problem:** Utilization-based load balancing misses the distinct characteristics of LLM workloads, leading to SLO blind spots or overly conservative routing that wastes capacity capacity. 
+- **Problem:** Utilization-based load balancing misses the distinct characteristics of LLM workloads, leading to SLO blind spots or overly conservative routing that wastes capacity. 
 - **Approach:** The Endpoint Picker (EPP) integrates with **in-pod latency predictor sidecars** that continuously learn from live traffic. These sidecars estimate **p90 TTFT** and **p90 TPOT** for each candidate pod given current load, cache state, and request features.  
 - **Outcome:** The **SLO scorer** compares predictions against per-request SLOs and directs traffic to pods with positive headroom. When no SLOs are provided, it defaults to minimizing latency.  
 ### Tradeoffs & Gaps
