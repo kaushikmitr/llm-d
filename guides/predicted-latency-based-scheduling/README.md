@@ -284,7 +284,7 @@ x-prediction-based-scheduling: true
 **Current limitations**
 - Percentile: only **p90** supported.  
 - Training: only **streaming mode** supported.  
-- TPOT sampling: every 200th token is logged and compared with predictions.  
+- TPOT sampling: for obsevability, every 200th token is logged and compared with predictions.  
 
 ---
 
