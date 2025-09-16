@@ -42,7 +42,7 @@ This guide explains how to deploy EPP with latency predictor sidecars, configure
 - **Build your EPP image** from the experimental branch (includes SLO prediction code paths & sidecars):  
   https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/slo-prediction-experimental
 
-- **Build your EPP Sidecars** from the same experimental branch:
+- **Build your EPP Sidecars** from the same experimental branch: 
   https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/slo-prediction-experimental/latencypredictor-v1
 
 ---
