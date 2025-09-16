@@ -53,7 +53,7 @@ Once prerequisites are met, you can validate predicted latency based scheduling:
 
 1. **Apply your InferencePool/EPP manifest**  
    - Consult the example manifest shown [here](https://github.com/kubernetes-sigs/gateway-api-inference-extension/blob/slo-prediction-experimental/config/manifests/inferencepool-resources-lp.yaml)
-   - Update the EPP container and sidecar images to the one you built.  
+   - Update the EPP container and sidecar images to the ones you built.  
    - Confirm that the `Deployment` includes the EPP container, training sidecar, and three prediction sidecars, each with their own volumes.  
    - Ensure the `plugins-config` ConfigMap defines both `default` and `slo` profiles.  
 
