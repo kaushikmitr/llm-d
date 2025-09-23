@@ -16,13 +16,13 @@ This feature introduces **predicted latency based load balancing**, where schedu
   Each prediction sidecar can sustain ~300 QPS on a c4-standard-192 machine. Because the EPP makes one prediction call per candidate pod, total prediction load grows with both **cluster QPS** and **pod count**. If traffic or pod count increases, prediction servers must be scaled horizontally.  
 
 - **Training mode**  
-  Only streaming workloads are supported for training.  
+  Only streaming workloads (set **"stream": "true"** in the request body as per openAI protocol) are supported for training.  
 
 - **Percentiles**  
   The predictor currently estimates only **p90** TTFT and TPOT. Other percentiles (p95, p99) or a mix of percentiles not yet available.  
 
 - **Prefill/Decode disaggregation**  
-    Current routing does **not support prefill/decode disaggregation** (where one pod performs prefill and another performs decode). Prediction and SLO scoring assume a pod executes the entire request lifecycle. Support for disaggregated serving is a **work in progress (WIP)**.  
+    Current routing does **not support prefill/decode disaggregation** (where one pod performs prefill and another performs decode). Prediction and SLO scoring assume a pod executes the entire request lifecycle. Support for disaggregated serving is a **work in progress**.  
 
 
 ### What is Tested
@@ -66,15 +66,15 @@ Once prerequisites are met, you can validate predicted latency based scheduling:
 3. **Send traffic**  
    - **Baseline:** run requests using the **`default`** profile (no prediction headers).  
    - **SLO-aware:** run requests with the **`slo`** profile and set  
-     `x-prediction-based-scheduling: true`, optionally adding SLO headers like `x-SLO-TTFT-ms` and `x-SLO-TPOT-ms`.  
+     `x-prediction-based-scheduling: true`, optionally adding SLO headers like `x-slo-ttft-ms` and `x-slo-tpot-ms`.  
 
    Example request:
    ```bash
    curl -v $GW_IP/v1/completions \
      -H 'Content-Type: application/json' \
      -H 'x-prediction-based-scheduling: true' \
-     -H 'x-SLO-TTFT-ms: 200' \
-     -H 'x-SLO-TPOT-ms: 50' \
+     -H 'x-slo-ttft-ms: 200' \
+     -H 'x-slo-tpot-ms: 50' \
      -d '{
        "model": "meta-llama/Llama-3.1-8B-Instruct",
        "prompt": "what is the difference between Franz and Apache Kafka?",
