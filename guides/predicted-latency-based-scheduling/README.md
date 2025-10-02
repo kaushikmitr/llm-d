@@ -1,28 +1,31 @@
-# Feature: Predicted Latency based Load Balancing
+# Experimental Feature: Predicted Latency based Load Balancing
 
 ## Overview
 
-This feature introduces **predicted latency based load balancing**, where scheduling decisions are guided by real-time predictions of request latency rather than only utilization metrics like queue depth or KV-cache utilization.
+This experimental feature introduces **predicted latency based load balancing**, where scheduling decisions are guided by real-time predictions of request latency rather than only utilization metrics like queue depth or KV-cache utilization.
 
-- **Problem:** Utilization-based load balancing misses the distinct characteristics of LLM workloads, leading to requests missing SLO targets or overly conservative routing that wastes capacity. 
+- **Problem:** Utilization-based load balancing misses some distinct characteristics of LLM workloads, leading to requests missing SLO targets or leads to overly conservative routing that wastes capacity. 
 - **Approach:** The Endpoint Picker (EPP) integrates with **in-pod latency predictor sidecars** that continuously learn from live traffic. These sidecars estimate **p90 TTFT** and **p90 TPOT** for each candidate pod given current load, prefix cache state, and request features.  
-- **Outcome:** The **SLO scorer** compares predictions against per-request SLOs and directs traffic to pods with positive headroom. If none exist, requests are shed (priority < 0) or sent to a weighted pool favoring lower latency pods.
+- **Outcome:** The **SLO scorer** compares predictions against per-request SLOs and directs traffic to pods with some headroom. If none exist, requests are shed (priority < 0) or sent to a weighted pool favoring lower latency pods.
 ### Tradeoffs & Gaps
 
-- **Homogeneous pool assumption**  
+- **Homogeneous InferencePool**  
   Current predictors assume that all model server pods are identical (same GPU type, model weights, and serving configuration). Heterogeneous pools are not yet modeled.  
 
-- **Prediction QPS scaling**  
-  Each prediction sidecar can sustain ~300 QPS on a c4-standard-192 machine. Because the EPP makes one prediction call per candidate pod, total prediction load grows with both **cluster QPS** and **pod count**. If traffic or pod count increases, prediction servers must be scaled horizontally.  
+- **Scaling limits**  
+  Each prediction sidecar can sustain ~300 QPS on a c4-standard-192 Google cloud machine (**≈ 192 vCPUs, 720 GB RAM, Up to 100 Gbps network, Up to 200 Gbps aggregate throughput**). Because the EPP makes one prediction call per candidate pod, total prediction load grows with both **cluster QPS** and **pod count**. If traffic or pod count increases, prediction servers must be scaled horizontally.  
 
 - **Training mode**  
-  Only streaming workloads (set **"stream": "true"** in the request body as per openAI protocol) are supported for training.  
+  Only streaming workloads (set **"stream": "true"** in the request body as per openAI protocol) are supported.  
 
 - **Percentiles**  
-  The predictor currently estimates only **p90** TTFT and TPOT. Other percentiles (p95, p99) or a mix of percentiles not yet available.  
+  The predictor currently estimates only **p90** TTFT and TPOT. Other percentiles (p95, p99) or a mix of percentiles are not yet available.  
 
 - **Prefill/Decode disaggregation**  
-    Current routing does **not support prefill/decode disaggregation** (where one pod performs prefill and another performs decode). Prediction and SLO scoring assume a pod executes the entire request lifecycle. Support for disaggregated serving is a **work in progress**.  
+  Current routing does **not support prefill/decode disaggregation** (where one pod performs prefill and another performs decode). Prediction and SLO scoring assume a pod executes the entire request lifecycle. Support for disaggregated serving is a **work in progress**.  
+
+- **Unvalidated against advanced inference features**  
+  Predictions have not yet been tested with advanced serving strategies such as LoRA adapters, speculative decoding, or beam search. Each of these may shift latency characteristics (e.g., speculative decoding may reduce TTFT but increase TPOT variance), and models may need to be retrained or extended to remain accurate in these contexts.
 
 
 ### What is Tested
@@ -39,10 +42,36 @@ This guide explains how to deploy EPP with latency predictor sidecars, configure
   Follow the official installation steps here:  
   https://gateway-api-inference-extension.sigs.k8s.io/guides/
 
-- **Build your EPP image** from the experimental branch (includes SLO prediction code paths & sidecars):  
-  https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/slo-prediction-experimental
+- **Build your EPP image** from the experimental branch:  
 
-- **Build your EPP Sidecars** from the same experimental branch: 
+
+    ***Prerequisites***
+    - Docker/BuildKit installed
+    - Access to a container registry (e.g., GCP Artifact Registry, Docker Hub, ECR)
+
+    ***Clone & checkout***
+    ```bash
+    git clone https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
+    cd gateway-api-inference-extension
+    git checkout slo-prediction-experimental
+    ```
+
+    ***Set your target registry and tag***
+    ```
+    export IMG="<your-registry>/epp:slo-prediction-$(git rev-parse --short HEAD)"
+    ```
+
+    ***Build the image***
+    ```
+    docker build -t "$IMG" -f Dockerfile .
+    ```
+
+    ***Push the image***
+    ```
+    docker push "$IMG"
+    ```
+
+- **Build your EPP Sidecars** from the same experimental branch as described here: 
   https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/slo-prediction-experimental/latencypredictor-v1
 
 ---
