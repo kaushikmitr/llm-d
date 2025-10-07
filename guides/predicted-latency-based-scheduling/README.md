@@ -76,7 +76,7 @@ This guide explains how to deploy EPP with latency predictor sidecars, configure
 
 ---
 
-## Testing predicted latency based scheduling
+## Testing Predicted Latency based Scheduling
 
 Once prerequisites are met, you can validate predicted latency based scheduling:
 
