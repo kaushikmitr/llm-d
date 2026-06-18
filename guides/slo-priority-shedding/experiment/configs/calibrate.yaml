@@ -1,0 +1,42 @@
+# Phase 0.5 — CALIBRATE. Ramp concurrency on a single (high-priority) class with NO SLO
+# headers to measure raw TTFT/TPOT vs load. Use the per-stage TTFT/TPOT to (a) find C_sat —
+# the concurrency where latency departs from the idle floor — and (b) set the SLO for the
+# real phases (SLO ~= idle p50 + margin). Nothing is shed here (no SLO headers).
+load:
+  type: concurrent
+  num_workers: ${NUM_WORKERS}
+  request_timeout: 600.0
+  stages:
+    - { num_requests: 48,  concurrency_level: 4 }
+    - { num_requests: 96,  concurrency_level: 8 }
+    - { num_requests: 192, concurrency_level: 16 }
+    - { num_requests: 288, concurrency_level: 32 }
+    - { num_requests: 288, concurrency_level: 48 }
+api:
+  type: completion
+  streaming: true
+  headers:
+    x-llm-d-inference-objective: high-priority
+server:
+  type: vllm
+  model_name: ${MODEL_NAME}
+  base_url: ${ENDPOINT_URL}
+  ignore_eos: true
+tokenizer:
+  pretrained_model_name_or_path: ${TOKENIZER}
+data:
+  type: conversation_replay
+  conversation_replay:
+    seed: 202
+    num_conversations: 48
+    max_model_len: 262144
+    shared_system_prompt_len: 3000
+    dynamic_system_prompt_len: { type: uniform,   min: 15000, max: 100000, mean: 55000, std_dev: 25000 }
+    turns_per_conversation:    { type: normal,    min: 2,     max: 20,     mean: 6,     std_dev: 3.5 }
+    input_tokens_per_turn:     { type: lognormal, min: 100,   max: 10000,  mean: 1500,  std_dev: 1200 }
+    output_tokens_per_turn:    { type: lognormal, min: 50,    max: 4000,   mean: 800,   std_dev: 600 }
+    tool_call_latency_sec:     { type: normal,    min: 0,     max: 0,      mean: 0,     std_dev: 0 }
+report:
+  request_lifecycle: { summary: true, per_stage: true, per_request: true }
+storage:
+  local_storage: { path: /workspace }

@@ -1,0 +1,102 @@
+## SLO-aware priority shedding — llm-d Router values.
+## Layer this on top of guides/recipes/router/base.values.yaml.
+##
+## Routing is agentic-serving style: token-load-scorer + prefix-cache-affinity-filter
+## (load- and prefix-cache-aware). On top of that, latency-slo-admitter SHEDS sheddable
+## (priority < 0) requests at admission when no endpoint is predicted to meet the
+## request's TTFT/TPOT SLO — protecting higher-priority traffic under saturation.
+##
+## predicted-latency-producer is kept because the admitter consumes its predictions.
+## Both the admitter and the producers (predicted-latency, inflight-load) auto-bind by
+## interface, so they are listed under `plugins` but NOT referenced in schedulingProfiles.
+## The explicit approx-prefix-cache-producer is intentionally omitted so the prefix-cache
+## plugins fall back to the auto-instantiated default producer (autoTune on).
+##
+## Requests must send "stream": true plus one or both SLO headers
+## (x-llm-d-slo-ttft-ms / x-llm-d-slo-tpot-ms) for the admitter to act; it is a no-op
+## when SLO headers are absent.
+router:
+  # Latency predictor sidecars (training + prediction server) feed predicted-latency-producer.
+  # Use the chart's CANONICAL ghcr images: they package the module as
+  # llm_d_latency_predictor.prediction_server, matching the chart's hardcoded
+  # `uvicorn llm_d_latency_predictor.prediction_server:app` args. (The k8s-staging-images
+  # latency-*-server:main images use a top-level prediction_server.py layout that breaks
+  # that hardcoded arg with "No module named 'llm_d_latency_predictor'".)
+  latencyPredictor:
+    enabled: true
+    trainingServer:
+      image:
+        registry: ghcr.io/llm-d
+        repository: llm-d-latency-predictor-training-server-dev
+        tag: latest
+    predictionServers:
+      image:
+        registry: ghcr.io/llm-d
+        repository: llm-d-latency-predictor-prediction-server-dev
+        tag: latest
+
+  # GKE Managed Prometheus, unauthenticated EPP /metrics.
+  # auth.enabled=false adds the EPP flag --metrics-endpoint-auth=false (drops the 401 on
+  # :9090/metrics). NOTE: with provider=gmp + auth=false the chart renders NO scrape
+  # resource of its own, so apply the unauthenticated PodMonitoring in ../monitoring/gke/.
+  monitoring:
+    interval: "10s"
+    provider:
+      name: gmp
+    prometheus:
+      enabled: true
+      auth:
+        enabled: false
+
+  extraServicePorts:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 8081
+
+  epp:
+    pluginsConfigFile: slo-admitter-plugins.yaml
+    pluginsCustomConfig:
+      slo-admitter-plugins.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+        - type: token-load-scorer
+        - type: inflight-load-producer
+        - type: predicted-latency-producer
+          parameters:
+            streamingMode: true
+        - type: prefix-cache-affinity-filter
+          parameters:
+            # Calibrated for Mistral-Medium-3.5-128B (BF16, TP8) on H100 80GB via
+            # guides/recipes/router/calibration (CHUNK_SIZE=16384 = --max-num-batched-tokens).
+            # Recalibrate for any other model/hardware/context.
+            peakPrefillThroughput: 17327
+        - type: latency-slo-admitter
+        # Neutralize the LEGACY utilization-based admission path so shedding is attributable
+        # solely to the SLO admitter. With flow-control disabled, legacy admission drops
+        # sheddable (priority<0) requests when the saturation detector reports >= 1.0, where
+        # the per-pod score = max(waitingQueue/queueDepthThreshold, kvUtil/kvCacheUtilThreshold)
+        # and the pool score is the average across pods. Raising both thresholds keeps that
+        # score < 1.0 in normal operation, so this path stays dormant and only the SLO admitter
+        # sheds. Remove this block if you WANT utilization backpressure shedding too.
+        - type: utilization-detector
+          parameters:
+            # KV-cache utilization (0-1) at which a pod counts as fully saturated. Default 0.8
+            # (shed at 80% KV); 1.0 is the max allowed, so a pod only saturates at ~100% KV.
+            kvCacheUtilThreshold: 1.0
+            # Waiting-queue depth at which a pod counts as fully saturated. Default 5 (shed at a
+            # 5-deep queue); 100 is far above the queue depths this workload reaches (~0-1), so
+            # the queue term never drives utilization-based saturation here.
+            queueDepthThreshold: 100
+        schedulingProfiles:
+        - name: default
+          plugins:
+          - pluginRef: prefix-cache-affinity-filter
+          - pluginRef: token-load-scorer
+
+  # Reuse the optimized-baseline-labeled model servers (the Mistral overlay in
+  # ../modelserver/gpu/vllm/ is labeled llm-d.ai/guide=optimized-baseline).
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: "optimized-baseline"

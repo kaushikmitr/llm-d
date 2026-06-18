@@ -1,0 +1,35 @@
+# Priority tiers for SLO-aware shedding.
+#
+# latency-slo-admitter sheds requests with priority < 0 ("sheddable") when no endpoint
+# can meet their SLO; priority >= 0 is protected. A request selects its objective with
+# the `x-llm-d-inference-objective: <name>` header.
+#
+# poolRef.name must match the InferencePool (= the router release name; this setup used
+# `predicted-latency-routing`). Adjust if your release name differs.
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceObjective
+metadata:
+  name: high-priority
+  namespace: llm-d-predicted-latency
+spec:
+  priority: 10
+  poolRef:
+    # MUST match the InferencePool's API group (the GAIE pool is inference.networking.k8s.io,
+    # NOT x-k8s.io). A mismatch means the EPP can't associate the objective with its pool, so
+    # priority silently falls back to 0 and nothing is ever shed.
+    group: inference.networking.k8s.io
+    kind: InferencePool
+    name: predicted-latency-routing
+---
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceObjective
+metadata:
+  name: low-priority
+  namespace: llm-d-predicted-latency
+spec:
+  # Negative => sheddable: dropped at admission when the SLO can't be met under load.
+  priority: -10
+  poolRef:
+    group: inference.networking.k8s.io
+    kind: InferencePool
+    name: predicted-latency-routing

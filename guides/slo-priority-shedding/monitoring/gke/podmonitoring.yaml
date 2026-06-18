@@ -1,0 +1,41 @@
+# GKE Managed Prometheus (GMP) scrape config, unauthenticated.
+# Pairs with router value monitoring.prometheus.auth.enabled=false, which adds the EPP
+# flag --metrics-endpoint-auth=false so :9090/metrics is served without a token.
+#
+# The chart only emits a GMP PodMonitoring when auth.enabled=true (authorized scrape),
+# so for the auth-false setup we declare PodMonitoring directly.
+#
+# On GKE with automatic application monitoring the decode (vLLM) pods are already
+# auto-scraped on :8000; the decode PodMonitoring below is for portability to clusters
+# without auto-monitoring. The EPP PodMonitoring is the one that is actually required
+# (the EPP metrics port is not auto-scraped). Update the selector/name to match your
+# release if it is not `predicted-latency-routing`.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: predicted-latency-routing-epp
+  labels:
+    llm-d.ai/guide: optimized-baseline
+spec:
+  selector:
+    matchLabels:
+      llm-d-router-gateway: predicted-latency-routing-epp
+  endpoints:
+    - port: metrics          # EPP metrics container port (9090)
+      path: /metrics
+      interval: 10s
+---
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: predicted-latency-routing-decode
+  labels:
+    llm-d.ai/guide: optimized-baseline
+spec:
+  selector:
+    matchLabels:
+      llm-d.ai/role: decode
+  endpoints:
+    - port: 8000             # vLLM OpenAI server /metrics
+      path: /metrics
+      interval: 10s

@@ -1,0 +1,40 @@
+# Phase 0 — WARMUP. Train the XGBoost latency predictor across realistic load.
+# NO SLO headers (latency-slo-admitter is a no-op without them, so nothing is shed and the
+# predictor trains on real TTFT/TPOT for every request). streaming:true is required for the
+# predictor to learn TPOT (predicted-latency-producer streamingMode=true).
+load:
+  type: concurrent
+  num_workers: ${NUM_WORKERS}
+  request_timeout: 600.0
+  stages:
+    - { num_requests: 96,  concurrency_level: 8 }
+    - { num_requests: 192, concurrency_level: 16 }
+    - { num_requests: 288, concurrency_level: 24 }
+api:
+  type: completion
+  streaming: true
+  headers:
+    x-llm-d-inference-objective: high-priority
+server:
+  type: vllm
+  model_name: ${MODEL_NAME}
+  base_url: ${ENDPOINT_URL}
+  ignore_eos: true
+tokenizer:
+  pretrained_model_name_or_path: ${TOKENIZER}
+data:
+  type: conversation_replay
+  conversation_replay:
+    seed: ${SEED}   # unique per run (run-phase.sh defaults to a timestamp) — see note below
+    num_conversations: 24
+    max_model_len: 262144
+    shared_system_prompt_len: 3000
+    dynamic_system_prompt_len: { type: uniform,   min: 15000, max: 100000, mean: 55000, std_dev: 25000 }
+    turns_per_conversation:    { type: normal,    min: 2,     max: 20,     mean: 6,     std_dev: 3.5 }
+    input_tokens_per_turn:     { type: lognormal, min: 100,   max: 10000,  mean: 1500,  std_dev: 1200 }
+    output_tokens_per_turn:    { type: lognormal, min: 50,    max: 4000,   mean: 800,   std_dev: 600 }
+    tool_call_latency_sec:     { type: normal,    min: 0,     max: 0,      mean: 0,     std_dev: 0 }
+report:
+  request_lifecycle: { summary: true, per_stage: true, per_request: true }
+storage:
+  local_storage: { path: /workspace }

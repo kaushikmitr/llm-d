@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: decode
+spec:
+  # 3 replicas x TP8 = 24 H100-80GB = the whole cluster. Recreate (not the default
+  # RollingUpdate) because a surge pod can never schedule — there are no spare GPUs
+  # to bring up a new replica before an old one is torn down.
+  strategy:
+    type: Recreate
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: modelserver
+          command: ["vllm", "serve"]
+          args:
+            - "mistralai/Mistral-Medium-3.5-128B"
+            - "--disable-access-log-for-endpoints=/health,/metrics,/v1/models"
+            - "--tensor-parallel-size=8"
+            # Serve the model's full 256K context. At TP8 (640GB), BF16 weights
+            # (~256GB) leave ~256GB for KV (~730K tokens), so a full 256K sequence
+            # (~88GB) fits with room for several concurrent. Long-context requests
+            # are expensive, so the pool still saturates at demo-scale concurrency
+            # (saturation is what triggers SLO shedding).
+            - "--max-model-len=262144"
+            # Chunked prefill (default on) keeps the prefill batch bounded at 16384
+            # even with the 256K max context, so profiling memory stays in budget.
+            - "--max-num-batched-tokens=16384"
+            - "--max-num-seqs=128"
+            # Model-card recommended value (0.8, not 0.95): leaves headroom for the
+            # FP8 vision tower / activation warmup on this dense 128B model.
+            - "--gpu-memory-utilization=0.8"
+            # Mistral-native parsers (function calling + reasoning effort).
+            - "--tool-call-parser=mistral"
+            - "--enable-auto-tool-choice"
+            - "--reasoning-parser=mistral"
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-d-hf-token
+                  key: HF_TOKEN
+          resources:
+            limits:
+              cpu: '64'
+              memory: 512Gi
+              nvidia.com/gpu: 8
+            requests:
+              cpu: '32'
+              memory: 256Gi
+              nvidia.com/gpu: 8
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: shm
+            - mountPath: /.cache
+              name: torch-compile-cache
+            - mountPath: /.triton
+              name: triton-cache
+            - mountPath: /.config
+              name: vllm-config
+          startupProbe:
+            # ~128GB FP8 weights downloaded to an emptyDir on first start, plus
+            # TP8 graph capture — allow up to 2h before declaring failure.
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 240
+          livenessProbe:
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            # TP8 NCCL needs more shared memory than the 2-GPU baseline.
+            sizeLimit: 40Gi
+        - name: torch-compile-cache
+          emptyDir: {}
+        - name: triton-cache
+          emptyDir: {}
+        - name: vllm-config
+          emptyDir: {}

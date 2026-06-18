@@ -1,0 +1,35 @@
+{
+  "model": "mistralai/Mistral-Medium-3.5-128B",
+  "topology": "3x TP8 H100-80GB (24 GPUs), 256K ctx",
+  "slo_ttft_ms": 15000,
+  "slo_tpot_ms": 40,
+  "c_sat": 32,
+  "workload": "agentic conversation_replay (3K shared + 15-100K dynamic system prompt, ~6 turns, 1.5K in / 0.8K out per turn)",
+  "shedder": "latency-slo-admitter only (utilization path neutralized: kvCacheUtilThreshold=1.0, queueDepthThreshold=100)",
+  "notes": "high-priority bypasses admission (priority>=0); high p90 TTFT is sensitive to per-seed prompt-size mix at n=96, so median is the robust metric. All sheds 100% SLO-path (utilization-path=0 in every phase).",
+  "phases": [
+    {
+      "label": "baseline\n(low=8)",
+      "low_conc": 8,
+      "high": {"offered": 48, "served": 48, "shed_pct": 0, "ttft_mean_s": 2.47, "ttft_med_s": 0.550, "ttft_p90_s": 8.10},
+      "low":  {"offered": 48, "served": 48, "shed_pct": 0, "ttft_mean_s": 3.81, "ttft_med_s": 0.583, "ttft_p90_s": 15.33},
+      "latency_note": "shed% is the canonical baseline (seed 1001/1002, 0%); the served TTFT mean/p90 anchor is from a TPOT=40 baseline run (base2, seed 6001/6002) since the original baseline pods were GC'd. Baseline latency is a workload property and seed-robust.",
+      "slo_path_rejections": 0, "util_path_drops": 0
+    },
+    {
+      "label": "saturated\n(low=64)",
+      "low_conc": 64,
+      "high": {"offered": 96, "served": 96, "shed_pct": 0, "ttft_mean_s": 13.03, "ttft_med_s": 0.536, "ttft_p90_s": 39.965},
+      "low":  {"offered": 384, "served": 221, "shed_pct": 42, "ttft_mean_s": 35.18, "ttft_med_s": 24.221, "ttft_p90_s": 89.705},
+      "slo_path_rejections": 163, "util_path_drops": 0
+    },
+    {
+      "label": "saturated\n(low=96)",
+      "low_conc": 96,
+      "high": {"offered": 144, "served": 144, "shed_pct": 0, "ttft_mean_s": 8.90, "ttft_med_s": 7.14, "ttft_p90_s": 18.54},
+      "low":  {"offered": 2000, "served": 207, "shed_pct": 90, "ttft_mean_s": 10.96, "ttft_med_s": 9.40, "ttft_p90_s": 22.60},
+      "slo_path_rejections": 1793, "util_path_drops": 0,
+      "note": "sat96b re-run: low flood sized to overlap high (low ended ~3min before high; high ran ~80% flooded). high median 7.1s = premium also queues under HEAVY saturation, so protection here is mainly via admission (0% vs 90% shed)."
+    }
+  ]
+}

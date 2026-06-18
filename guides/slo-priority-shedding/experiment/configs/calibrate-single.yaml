@@ -1,0 +1,39 @@
+# Single-concurrency calibration point. Run once PER concurrency level (fresh Job, fresh
+# state) rather than as multi-stage, so higher-concurrency points don't get prefix-cache
+# hits from earlier stages (per the datagen's own guidance: "Run each concurrency level as
+# a separate benchmark"). num_conversations = concurrency so each slot owns one conversation.
+# No SLO headers — calibration measures RAW TTFT/TPOT vs load to set the SLO + find C_sat.
+load:
+  type: concurrent
+  num_workers: ${NUM_WORKERS}
+  request_timeout: 600.0
+  stages:
+    - { num_requests: ${NREQ}, concurrency_level: ${CONC} }
+api:
+  type: completion
+  streaming: true
+  headers:
+    x-llm-d-inference-objective: high-priority
+server:
+  type: vllm
+  model_name: ${MODEL_NAME}
+  base_url: ${ENDPOINT_URL}
+  ignore_eos: true
+tokenizer:
+  pretrained_model_name_or_path: ${TOKENIZER}
+data:
+  type: conversation_replay
+  conversation_replay:
+    seed: ${SEED}
+    num_conversations: ${CONC}
+    max_model_len: 262144
+    shared_system_prompt_len: 3000
+    dynamic_system_prompt_len: { type: uniform,   min: 15000, max: 100000, mean: 55000, std_dev: 25000 }
+    turns_per_conversation:    { type: normal,    min: 2,     max: 20,     mean: 6,     std_dev: 3.5 }
+    input_tokens_per_turn:     { type: lognormal, min: 100,   max: 10000,  mean: 1500,  std_dev: 1200 }
+    output_tokens_per_turn:    { type: lognormal, min: 50,    max: 4000,   mean: 800,   std_dev: 600 }
+    tool_call_latency_sec:     { type: normal,    min: 0,     max: 0,      mean: 0,     std_dev: 0 }
+report:
+  request_lifecycle: { summary: true, per_stage: true, per_request: true }
+storage:
+  local_storage: { path: /workspace }

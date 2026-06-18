@@ -1,0 +1,49 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Mistral-Medium-3.5-128B (dense, served BF16) model server, 3 x TP8 = 24 H100-80GB.
+# Labeled llm-d.ai/guide=optimized-baseline so the SLO-admitter router/InferencePool
+# (modelServers.matchLabels: llm-d.ai/guide=optimized-baseline) selects it unchanged.
+resources:
+  - ../../../../recipes/modelserver/base/single-host/default
+
+namePrefix: mistral-medium-
+
+images:
+  - name: REPLACE_MODEL_SERVER_IMAGE
+    # Mistral-Medium-3.5 (mistral3 arch) requires vLLM nightly per the model card
+    # (mistral_common >= 1.11.1, transformers >= 5.4.0). Pinned for reproducibility.
+    newName: vllm/vllm-openai
+    newTag: nightly-4c626633159887b0f2c962058c17c78f1434556d
+
+labels:
+  - pairs:
+      llm-d.ai/model: Mistral-Medium-3.5-128B
+      llm-d.ai/guide: optimized-baseline
+      llm-d.ai/accelerator-variant: gpu
+      llm-d.ai/accelerator-vendor: nvidia
+    includeSelectors: true
+    includeTemplates: true
+    fields:
+      - version: v1
+        kind: ServiceAccount
+        path: metadata/labels
+        create: true
+      - group: apps
+        version: v1
+        kind: Deployment
+        path: metadata/labels
+        create: true
+      - group: apps
+        version: v1
+        kind: Deployment
+        path: spec/selector/matchLabels
+        create: true
+      - group: apps
+        version: v1
+        kind: Deployment
+        path: spec/template/metadata/labels
+        create: true
+
+patches:
+  - path: patch-vllm.yaml
