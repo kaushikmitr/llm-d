@@ -6,29 +6,33 @@
 
 ## 1\. Motivation
 
-The llm-d router currently ships with a multi-signal weighted scorer as its default configuration. The blend assigns weights to prefix-cache match (3), queue depth (2), KV-cache utilization (2), and a no-hit LRU signal (2), and picks the pod with the highest combined score. This configuration works, it outperforms Kubernetes Service round-robin on most workloads, but its behavior is hard to predict, hard to tune, and varies substantially across traffic shapes. The same weights that deliver the best result on one workload can deliver the worst on another, with no operator-visible signal that this should happen.
+Until recently, the llm-d router shipped a multi-signal weighted scorer as its default configuration. The blend assigns weights to prefix-cache match (3), queue depth (2), KV-cache utilization (2), and a no-hit LRU signal (2), and picks the pod with the highest combined score. This configuration works, it outperforms Kubernetes Service round-robin on most workloads, but its behavior is hard to predict, hard to tune, and varies substantially across traffic shapes. The same weights that deliver the best result on one workload can deliver the worst on another, with no operator-visible signal that this should happen.
 
 This makes the configuration difficult to operate. Tuning the weights requires the operator to develop an intuition for what each signal contributes in the current traffic regime, then iteratively adjust until performance stabilizes. The process is opaque: each weight interacts with the others through the picker's max-score selection, and the relationship between a weight change and the resulting routing behavior is not direct. Operators in practice either accept the defaults and tolerate whatever performance they yield, or invest substantial effort in per-workload tuning that does not transfer to other workloads.
 
-We propose a different organizing principle: **identify what is limiting throughput on the target workload, then deploy the scheduler configuration whose primary signal directly tracks that limit.** We call this the *bottleneck-matched configuration* (or *matched configuration* for short): a pipeline of filter \+ scorer \+ picker plugins whose dominant input is the same quantity that's binding the workload's throughput. Where the heuristic blend produces an emergent outcome from the interaction of several weights, the matched configuration produces a direct outcome from one signal selected to match the binding constraint. The configuration becomes legible, an operator can predict what the scheduler will do, why it will do it, and how it will degrade under load, and the tuning surface collapses from a multi-dimensional weight space to a single decision (which bottleneck) with the remaining parameters either fixed by the configuration or derivable from one hardware calibration measurement.
+This document develops a different organizing principle: **identify what is limiting throughput on the target workload, then deploy the scheduler configuration whose primary signal directly tracks that limit.** We call this the *bottleneck-matched configuration* (or *matched configuration* for short): a pipeline of filter \+ scorer \+ picker plugins whose dominant input is the same quantity that's binding the workload's throughput. Where the heuristic blend produces an emergent outcome from the interaction of several weights, the matched configuration produces a direct outcome from one signal selected to match the binding constraint. The configuration becomes legible, an operator can predict what the scheduler will do, why it will do it, and how it will degrade under load, and the tuning surface collapses from a multi-dimensional weight space to a single decision (which bottleneck) with the remaining parameters either fixed by the configuration or derivable from one hardware calibration measurement.
 
 The remainder of this document develops this framework across three workloads representing two bottleneck regimes (prefill compute, decode slots), shows that the matched configuration outperforms round-robin in each regime, and derives a closed-form expression for the one threshold the matched configurations require. We also evaluate the latency-predictor pipeline as a workload-agnostic alternative; it outperforms round-robin on all three workloads and is a reasonable choice for operators with high-variance production traffic or insufficient information to characterize their workload's bottleneck, at the cost of additional setup overhead.
+
+This principle has since landed in llm-d. The [optimized-baseline guide](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline) now ships `prefix-cache-affinity-filter + token-load-scorer`, the prefill-bound matched configuration analyzed here, as the recommended out-of-the-box router configuration; the filter's interface has been redesigned around the calibration quantity this document derives (`peakPrefillThroughput`, see 6.2 and 7); and the calibration procedure is distributed with the router as a [shared recipe](https://github.com/llm-d/llm-d/tree/main/guides/recipes/router/calibration) with a per-(model, accelerator) [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md). This document is the analysis behind that shift. The experiments below were run against the filter's earlier parameterization; the mapping to the shipped interface is given in 2 and 6.2.
 
 ---
 
 ## 2\. Setup
 
-**Hardware and serving stack.** 10× Qwen3-32B (8x for b2b-saas) model servers running vLLM, each on a dedicated H100 GPU node on GKE. vLLM is configured with `max-num-batched-tokens=8192` and continuous batching. Each model server runs as a Kubernetes pod, fronted by a Gateway API `InferencePool` resource that routes inference traffic through the router.
+**Hardware and serving stack.** 10× Qwen3-32B (8x for b2b-saas) model servers running vLLM, each with tensor parallelism TP=2 across 2× H100 GPUs on a dedicated GKE node. vLLM is configured with `max-num-batched-tokens=8192` and continuous batching. Each model server runs as a Kubernetes pod, fronted by a Gateway API `InferencePool` resource that routes inference traffic through the router.
 
-**Router pipeline and plugin configuration.** The router composes scheduling decisions from a pipeline of filter and scorer plugins. Filters restrict the candidate pod set; scorers assign weighted scores; a picker plugin selects the final destination from the scored candidates. We evaluate four scheduler configurations:
+**Router pipeline and plugin configuration.** The router composes scheduling decisions from a pipeline of filter and scorer plugins. Filters restrict the candidate pod set; scorers assign weighted scores; a picker plugin selects the final destination from the scored candidates. We evaluate five scheduler configurations:
 
 - **k8**, Kubernetes Service round-robin, bypassing the router entirely. Serves as the no-scheduler baseline.  
 - **token-load-aware**, `prefix-cache-affinity-filter` (`affinityThreshold=0.8`, `maxTokensInFlightPenalty=286720`, `maxTTFTPenaltyMs=0`) followed by `token-load-scorer` and `max-score-picker`. The matched configuration for prefill-bound workloads. We refer to `maxTokensInFlightPenalty` as τ throughout this document. The token-load scorer uses a lookahead formulation: `score(pod) = current_uncached_in_flight(pod) + prompt_tokens × (1 - hit_rate(pod))`, where the second term is the marginal uncached work this request would add on each candidate. Streaming is enabled for all workloads so the in-flight counter reflects both prefill and decode-phase token state.  
 - **active-request-aware**, `prefix-cache-affinity-filter` (same `affinityThreshold=0.8` as the token-load-aware configuration) followed by `active-request-scorer` and `max-score-picker`. The matched configuration for decode-bound workloads. The affinity filter is included structurally but is a no-op when shared-prefix content is too small to clear the 0.8 threshold; on reasoning's 250-token shared system prompt the filter passes all candidates through and the downstream scorer operates on the full set.  
-- **router default**, the heuristic weighted blend currently shipped as the router default: `prefix-cache-scorer (weight=3) + queue-scorer (weight=2) + kv-cache-utilization-scorer (weight=2) + no-hit-lru-scorer (weight=2)`, with `max-score-picker`. No affinity filter, prefix locality is enforced by the prefix-cache-scorer's weight in the blend.  
+- **legacy blend**, the heuristic multi-signal weighted blend shipped as the router default at the time these experiments were run (since superseded as the default by the prefix+token matched configuration, see 1): `prefix-cache-scorer (weight=3) + queue-scorer (weight=2) + kv-cache-utilization-scorer (weight=2) + no-hit-lru-scorer (weight=2)`, with `max-score-picker`. No affinity filter, prefix locality is enforced by the prefix-cache-scorer's weight in the blend.  
 - **latency-predictor**, `prefix-cache-affinity-filter (maxTTFTPenaltyMs=5000, maxTokensInFlightPenalty=0) + latency-scorer`, with `weighted-random-picker`. The workload-agnostic pipeline, with predictor training and prediction sidecars deployed alongside each model server.
 
 All configurations using the affinity filter use the same `affinityThreshold=0.8` and `explorationProbability≈0` (1e-9). Full configmaps are in 9.1.
+
+**Interface note.** Our experiments ran against the filter's earlier parameterization, which expressed the saturation override as a raw token-gap threshold (`maxTokensInFlightPenalty`, τ). The filter shipped on llm-d main has since been redesigned around the quantities this document derives: it takes `peakPrefillThroughput` (R\_peak, tokens/sec; default 15928) and `maxTTFTPenaltyMs` (T\_max; default 18000), estimates each pod's TTFT as `in_flight_tokens / peakPrefillThroughput`, and breaks stickiness when the best warm pod's estimated TTFT exceeds the best non-warm pod's by more than `maxTTFTPenaltyMs`. The two interfaces are algebraically equivalent with τ \= R\_peak × T\_max; our τ=286720 corresponds to the shipped defaults (15928 × 18s \= 286,704). A `ttftSource` parameter selects between the throughput-based estimate and the latency predictor's learned estimate, so the latency-predictor pipeline above is now a mode of the same filter rather than a separate configuration. See 6.2.
 
 **Workloads.** Three workloads are used:
 
@@ -52,11 +56,11 @@ Identify the workload's bottleneck, deploy the matched configuration:
 | **Decode slots** | Short prompts, long outputs, decode batch capacity is the binding constraint | **prefix-cache-affinity-filter (with** `maxTokensInFlightPenalty=286720`**) \+ active-request-scorer \+ max-score-picker** | Affinity filter is included structurally but acts as a no-op when shared-prefix content is too small to clear `affinityThreshold=0.8`. |
 | **Mixed / unknown / high-variance** | Heterogeneous traffic shapes; production workloads with shifting bottlenecks | **prefix-cache-affinity-filter (with `maxTTFTPenaltyMs=5000`) \+ latency-predictor \+ weighted-random-picker** | Outperforms k8 on all workloads evaluated here. Adds setup overhead (predictor training, sidecar deployment), prefer a matched configuration when the workload is well-understood. Plausibly the best choice for high-variance production workloads where the bottleneck shifts dynamically, though this is untested here. |
 
-The threshold τ in the affinity filter should be derived from one hardware calibration measurement per (model, accelerator), see 7\. On Qwen3-32B / H100 with `max-num-batched-tokens=8192` and a TTFT degradation tolerance of \~14s, this produces τ \= 286720 (= 35 × 8192, or 35 max-num-batched-tokens chunks of pending uncached prefill work).
+The threshold τ in the affinity filter should be derived from one hardware calibration measurement per (model, accelerator), see 7\. On Qwen3-32B / H100 with `max-num-batched-tokens=8192` and a TTFT degradation tolerance of 14s, this produces τ \= 286720 (= 35 × 8192, or 35 max-num-batched-tokens chunks of pending uncached prefill work).
 
-The prefix+token configuration is the bottleneck-matched choice for prefill-bound workloads and also serves as a strong default across regimes. For decode-bound workloads specifically (where active-stream count is the binding signal), the `active-request-scorer` configuration provides a small additional improvement at the operating range knee. For mixed workloads where the bottleneck shifts dynamically, the latency-predictor pipeline is the safer default at the cost of additional setup overhead.
+The prefix+token configuration is the bottleneck-matched choice for prefill-bound workloads and also serves as a strong default across regimes; it is now the configuration the optimized-baseline guide ships as the llm-d default (see 1). For decode-bound workloads specifically (where active-stream count is the binding signal), the `active-request-scorer` configuration provides a small additional improvement at the operating range knee. For mixed workloads where the bottleneck shifts dynamically, the latency-predictor pipeline is the safer default at the cost of additional setup overhead.
 
-A note on the heuristic weighted blend (`router default`): a carefully tuned weight set will outperform a general configuration on the specific workload it was tuned for. The default's current weights (`prefix=3, queue=2, kv=2, lru=2`) reflect optimization for repeated-corpus chat-completion-shaped traffic and deliver the lowest TTFT-p90 on b2b-saas (5.3). The matched configurations are not claimed to beat a bespoke weight set on the workload it was designed for; they are claimed to be predictable across workloads, derivable from one calibration measurement, and competitive across the load curve in each regime. The trade-off is best-case performance on one workload vs. legibility and portability across many.
+A note on the heuristic weighted blend (`legacy blend`): a carefully tuned weight set will outperform a general configuration on the specific workload it was tuned for. The blend's weights (`prefix=3, queue=2, kv=2, lru=2`) reflect optimization for repeated-corpus chat-completion-shaped traffic and deliver the lowest TTFT-p90 on b2b-saas (5.3). The matched configurations are not claimed to beat a bespoke weight set on the workload it was designed for; they are claimed to be predictable across workloads, derivable from one calibration measurement, and competitive across the load curve in each regime. The trade-off is best-case performance on one workload vs. legibility and portability across many.
 
 Section 5 presents the evidence. Section 6 develops the architectural argument for the affinity filter. Section 7 derives τ from hardware calibration.
 
@@ -101,18 +105,18 @@ In what follows we focus on **TTFT-p90 and input tokens per second** for the pre
 
 Long prompts (mean 70k tokens, growing across conversation turns), moderate outputs (mean 800), no cross-request prefix overlap. Per-pod prefill compute is the binding constraint. Matched configuration: `prefix-cache-affinity-filter` (τ=286720, equivalently 35 × B \= 35 chunks) \+ `token-load-scorer` \+ `max-score-picker`. Lookahead scoring: `score(pod) = current_uncached_in_flight + prompt_tokens × (1 - hit_rate(pod))`.
 
-#### 5.1.1 TTFT-p90 and  Input tokens per second
+#### 5.1.1 TTFT-p90 and Input tokens per second
 
 ![][image1]![][image2]
 
-#### 5.1.3 Prefix cache hit rate
+#### 5.1.2 Prefix cache hit rate
 
 ![][image3]  
-Per-conversation prompts are unique, so cache hits only come from within-conversation turn continuity. Each concurrency point is an independent run (the cluster is not warmed across runs), so the conc=10 column is noisy because the run has only \~60 total requests (10 conversations × \~6 turns) and absolute hit-rate values at this volume are dominated by which pods individual conversations happen to land on. At conc=20 prefix+token achieves the highest sustained hit rate (48%), consistent with the affinity filter preserving turn-to-turn locality where the soft-affinity (latency-predictor) and no-affinity (router default, which relies on the prefix-cache-scorer's weight in its blend instead) configurations do not. At high concurrency cache hit rate collapses across all configurations because per-pod KV capacity is exhausted by the diversity of active conversations, but the prefill-throughput advantage from 5.1.2 persists, suggesting the filter is doing useful work even when the steady-state hit rate metric is low.
+Per-conversation prompts are unique, so cache hits only come from within-conversation turn continuity. Each concurrency point is an independent run (the cluster is not warmed across runs), so the conc=10 column is noisy because the run has only \~60 total requests (10 conversations × \~6 turns) and absolute hit-rate values at this volume are dominated by which pods individual conversations happen to land on. At conc=20 prefix+token achieves the highest sustained hit rate (48%), consistent with the affinity filter preserving turn-to-turn locality where the soft-affinity (latency-predictor) and no-affinity (legacy blend, which relies on the prefix-cache-scorer's weight in its blend instead) configurations do not. At high concurrency cache hit rate collapses across all configurations because per-pod KV capacity is exhausted by the diversity of active conversations, but the prefill-throughput advantage from 5.1.1 persists, suggesting the filter is doing useful work even when the steady-state hit rate metric is low.
 
-#### 5.1.4 Summary
+#### 5.1.3 Summary
 
-Across the full load curve prefix+token has the lowest TTFT-p90 and highest in\_t/s. Through conc=60 TTFT-p90 stays below 40s; throughput plateaus at \~47k in\_t/s by conc=60 and holds. latency-predictor tracks prefix+token within \~10s of TTFT across the curve. k8 and router default exhibit cliff failures in multiple concurrency points and are not viable for sustained operation.
+Across the full load curve prefix+token has the lowest TTFT-p90 and highest in\_t/s. Through conc=60 TTFT-p90 stays below 40s; throughput plateaus at \~47k in\_t/s by conc=60 and holds. latency-predictor tracks prefix+token within \~10s of TTFT across the curve. k8 and the legacy blend exhibit cliff failures in multiple concurrency points and are not viable for sustained operation.
 
 ### 5.2 Reasoning (Decode-Bound)
 
@@ -120,33 +124,33 @@ Short prompts (mean 1000 tokens), long outputs (mean 8000, max 32k), 250-token s
 
 #### 5.2.1 TPOT-p90 and Output tokens per second
 
-#### ![][image4]![][image5]
+![][image4]![][image5]
 
-#### 5.2.3 Prefix cache hit rate
+#### 5.2.2 Prefix cache hit rate
 
 ![][image6]  
-Hit rates never reach the 0.8 affinity-filter threshold because the cacheable shared content is only 250 tokens (0.25 affinity at best). run-req and prefix+token both achieve high hit rates through the operating range because their schedulers do not actively scatter requests (run-req minimizes stream count per pod, which preserves locality as a side effect; prefix+token's filter is inactive but the downstream token-load-scorer also preserves locality through low-load preference). router default's blend creates more scatter, and latency-predictor's weighted-random sampling actively spreads requests.
+Hit rates never reach the 0.8 affinity-filter threshold because the cacheable shared content is only 250 tokens (0.25 affinity at best). run-req and prefix+token both achieve high hit rates through the operating range because their schedulers do not actively scatter requests (run-req minimizes stream count per pod, which preserves locality as a side effect; prefix+token's filter is inactive but the downstream token-load-scorer also preserves locality through low-load preference). the legacy blend creates more scatter, and latency-predictor's weighted-random sampling actively spreads requests.
 
-#### 5.2.4 Summary
+#### 5.2.3 Summary
 
-Overall run-req has the lowest TPOT-p90 and the highest out\_t/s. prefix+token is competitive but does not improve over run-req. Latency-predictor matches run-req at saturation. Router default's prefix-weighted scoring creates hotspots that hurt at every concurrency above 50\.
+Overall run-req has the lowest TPOT-p90 and the highest out\_t/s. prefix+token is competitive but does not improve over run-req. Latency-predictor matches run-req at saturation. The legacy blend's prefix-weighted scoring creates hotspots that hurt at every concurrency above 50\.
 
 ### 5.3 B2B-SaaS (Pathological Prefill-Bound)
 
 Synthetic stress workload: 150 distinct system prompts × 5 question variants, sampled randomly under Poisson arrival ramped from 3 → 60 QPS. 7200-token prompts (6000-token system \+ 1200-token question), 1000-token outputs, streaming. Aggregate cacheable content (\~900k tokens) exceeds aggregate per-pod KV capacity if prefixes are replicated rather than partitioned. Matched configuration: `prefix-cache-affinity-filter` (τ=286720, hard) \+ `token-load-scorer` \+ `max-score-picker`. See 4.2 for caveats on b2b-saas as a stress test.
 
-#### 5.3.1 TTFT-p90
+#### 5.3.1 TTFT-p90 and Input tokens per second
 
 ![][image7]![][image8]
 
-#### 5.3.3 Prefix cache hit rate
+#### 5.3.2 Prefix cache hit rate
 
 ![][image9]  
-Both prefix+token and router default sustain high hit rates (\~90-95%) once load ramps past QPS \~20. This is the cluster's prefix partition holding: each pod owns a subset of the 150 prefixes and serves repeated requests for that subset locally. Both configurations preserve the partition through the operating range, which is why both deliver the prefill-throughput advantage seen in 5.3.1 and 5.3.2. They preserve it through different mechanisms, though: prefix+token uses the `prefix-cache-affinity-filter` to restrict candidates to warm pods, then `token-load-scorer + max-score-picker` to pick among them. Router default has no affinity filter (see 2); its prefix locality is enforced by giving `prefix-cache-scorer` the largest weight (3) in the blend, which causes `max-score-picker` to almost always pick the pod with the highest prefix match. The two are mechanically different but produce similar steady-state behavior in this workload because both end up routing to the cache-warm pod most of the time. At very high QPS (50+) prefix+token's hit rate drops to 70-73% while router default holds at 96-97%; this reflects the τ=286720 saturation valve engaging on prefix+token when warm pods accumulate enough uncached in-flight tokens to trigger the override, briefly redistributing traffic away from warm pods. Router default has no such valve.
+Both prefix+token and the legacy blend sustain high hit rates (\~90-95%) once load ramps past QPS \~20. This is the cluster's prefix partition holding: each pod owns a subset of the 150 prefixes and serves repeated requests for that subset locally. Both configurations preserve the partition through the operating range, which is why both deliver the prefill-throughput advantage seen in 5.3.1. They preserve it through different mechanisms, though: prefix+token uses the `prefix-cache-affinity-filter` to restrict candidates to warm pods, then `token-load-scorer + max-score-picker` to pick among them. The legacy blend has no affinity filter (see 2); its prefix locality is enforced by giving `prefix-cache-scorer` the largest weight (3) in the blend, which causes `max-score-picker` to almost always pick the pod with the highest prefix match. The two are mechanically different but produce similar steady-state behavior in this workload because both end up routing to the cache-warm pod most of the time. At very high QPS (50+) prefix+token's hit rate drops to 70-73% while the legacy blend holds at 96-97%; this reflects the τ=286720 saturation valve engaging on prefix+token when warm pods accumulate enough uncached in-flight tokens to trigger the override, briefly redistributing traffic away from warm pods. The legacy blend has no such valve.
 
-#### 5.3.4 Summary
+#### 5.3.3 Summary
 
-Overall prefix+token (τ=286720) and router default both sustain useful TTFT and high prefill throughput. k8 cannot reach this range. latency-predictor cannot either. Beyond the operating range, router default's bespoke-tuned weights give it a slight TTFT advantage. The derivation in 7 produces τ=286720 from one calibration measurement and an SLO ceiling, eliminating the need to tune τ empirically per workload.
+Overall prefix+token (τ=286720) and the legacy blend both sustain useful TTFT and high prefill throughput. k8 cannot reach this range. latency-predictor cannot either. Beyond the operating range, the legacy blend's bespoke-tuned weights give it a slight TTFT advantage. The derivation in 7 produces τ=286720 from one calibration measurement and an SLO ceiling, eliminating the need to tune τ empirically per workload.
 
 ### 5.4 Cross-Workload Summary
 
@@ -156,7 +160,7 @@ Three workloads, two bottlenecks, two matched configurations. The pattern across
 
 | Workload | Bottleneck | Matched configuration | Knee position (matched) | Knee position (k8) | Throughput at knee (matched vs k8) |
 | :---- | :---- | :---- | :---- | :---- | :---- |
-| code-generation | prefill compute | prefix-cache-affinity  (τ=286720) \+ token-load) \+ max-score | conc=60 | conc=30 | 46k vs 16k in\_t/s (2.9×) |
+| code-generation | prefill compute | prefix-cache-affinity (τ=286720) \+ token-load \+ max-score | conc=60 | conc=30 | 46k vs 16k in\_t/s (2.9×) |
 | reasoning | decode slots | prefix-cache-affinity (τ=286720) \+ active-request-scorer \+ max-score | conc=350 | conc=250 | 7.0k vs 6.8k out\_t/s (\~parity) |
 | b2b-saas | prefill compute (pathological cache dynamics) | prefix-cache-affinity (τ=286720) \+ token-load \+ max-score | QPS=38 | QPS=18 | 90k vs 45k in\_t/s (2.0×) |
 
@@ -176,24 +180,26 @@ The filter is present with the same `affinityThreshold=0.8` in all three matched
 
 One filter, one threshold, three matched configurations, no per-workload reconfiguration.
 
-### 6.2 Override thresholds
+### 6.2 The saturation override
 
-The filter has two configurable thresholds that allow non-warm pods to bypass the affinity restriction when staying with the warm set would be harmful:
+The filter allows non-warm pods back into the candidate set when staying with the warm set would be harmful. In the interface our experiments ran against, this override was expressed as two alternative thresholds:
 
-- **`maxTokensInFlightPenalty`** (τ): a non-warm pod is added back to the candidate set if its uncached-tokens-in-flight count is at least τ lower than the warm pod's. This is the saturation guard used by the matched configurations, and engages only when the warm pod is genuinely compute-saturated.  
-- **`maxTTFTPenaltyMs`**: a non-warm pod is added back to the candidate set if its predicted TTFT is within the budget (in milliseconds) of the best warm pod's predicted TTFT. Requires the latency-predictor to produce TTFT estimates.
+- **`maxTokensInFlightPenalty`** (τ): a non-warm pod is added back to the candidate set if its uncached-tokens-in-flight count is at least τ lower than the warm pod's. This is the saturation guard used by the matched configurations (τ=286720, `maxTTFTPenaltyMs=0`), and engages only when the warm pod is genuinely compute-saturated.  
+- **`maxTTFTPenaltyMs`**: a non-warm pod is added back to the candidate set if its predicted TTFT is within the budget (in milliseconds) of the best warm pod's predicted TTFT. Requires the latency-predictor to produce TTFT estimates. Used by the latency-predictor pipeline (`maxTokensInFlightPenalty=0`, `maxTTFTPenaltyMs=5000`); see 6.3.
 
-The matched configurations use only the first threshold (τ=286720, `maxTTFTPenaltyMs=0`). The next section derives τ. The latency-predictor pipeline uses only the second threshold (`maxTokensInFlightPenalty=0`, `maxTTFTPenaltyMs=5000`); see 6.3.
+The filter on llm-d main unifies these into a single time-domain gate. Every pod's TTFT is estimated, either from `peakPrefillThroughput` (`in_flight_tokens / R_peak`, the default) or from the latency predictor, selected by `ttftSource`, and stickiness breaks when the best warm pod's estimated TTFT exceeds the best non-warm pod's by more than `maxTTFTPenaltyMs`. With the throughput source, this is exactly the token-gap condition above: the gate fires when the in-flight gap exceeds τ \= R\_peak × T\_max, computed internally. The shipped defaults (`peakPrefillThroughput=15928`, `maxTTFTPenaltyMs=18000`) reproduce our threshold: 15928 × 18s \= 286,704 ≈ 286720. Section 7 derives this quantity from hardware calibration; under the current interface, the calibration measurement *is* the configuration parameter.
 
 ### 6.3 Latency-predictor's threshold configuration
 
-The latency-predictor pipeline sets `maxTTFTPenaltyMs=5000` and uses weighted-random sampling among the candidates the filter produces. This combination has empirically worked well on the workloads where the predictor is appropriate (code-gen and reasoning). The 5s value can be raised if observed TTFT regressions warrant a tighter override; we have not characterized the sensitivity systematically.
+The latency-predictor pipeline sets `maxTTFTPenaltyMs=5000` and uses weighted-random sampling among the candidates the filter produces. This combination has empirically worked well on the workloads where the predictor is appropriate (code-gen and reasoning). The 5s value can be raised if observed TTFT regressions warrant a tighter override; we have not characterized the sensitivity systematically. In the current filter interface this configuration corresponds to `ttftSource: latencyPredictor` with `maxTTFTPenaltyMs=5000`.
 
 ---
 
 ## 7\. Deriving τ from the Hardware
 
 The 286720 threshold (= 35 × 8192, or 35 max-num-batched-tokens chunks) appears in our matched configurations without justification in 5\. This section derives it from a single calibration measurement and an operator-chosen SLO ceiling, and shows the formula generalizes across (model, accelerator) combinations.
+
+This derivation is no longer only an operator recipe: the filter on llm-d main implements it internally, taking `peakPrefillThroughput` (R\_peak) as its calibrated parameter and `maxTTFTPenaltyMs` (T\_max) as the SLO ceiling (see 6.2). The calibration measurement itself ships as [`guides/recipes/router/calibration`](https://github.com/llm-d/llm-d/tree/main/guides/recipes/router/calibration) (`calibrate.sh` reports `peakPrefillThroughput = CHUNK_SIZE / median(TTFT)`, exactly `B / T(B)` below), with measured reference values per (model, accelerator, engine) in the [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md).
 
 ### 7.1 What τ represents and when it should fire
 
@@ -219,18 +225,20 @@ We measured TTFT for single requests at prompt sizes `P = k · 8192` for `k = 1.
 
 ![][image13]
 
-`T(B = 8192) = 0.49` s, giving `R_peak = 20480 tokens/sec` per pod.
+`T(B = 8192) = 0.40` s, giving `R_peak = 20480 tokens/sec` per pod.
+
+(The shipped calibration recipe reports `peakPrefillThroughput = 15928` for the same nominal path (Qwen3-32B / H100 / TP=2 / B=8192) — lower than our 20480 due to methodological differences: the recipe takes the median TTFT of repeated random-token requests through the full request path, where our value comes from a single-request quadratic fit. The two decompositions agree on the quantity that matters, the override threshold: 15928 × 18s and 20480 × 14s both give τ ≈ 286.7k.)
 
 For T\_max values:
 
 | T\_max | τ\_sat |
 | ----: | ----: |
 | 10s | 205k |
-| **17s** | **286,720** |
+| **14s** | **286,720** |
 | 18s | 369k |
 | 25s | 512k |
 
-286720 corresponds to T\_max ≈ 17s, i.e., "the threshold fires when keeping a sticky request would cause new arrivals to queue \~17 seconds of prefill work." Equivalently, since `τ = K × B` for some integer K and `T_max = K × T(B)`, the threshold can be expressed in chunks: **τ \= 35 × B \= 35 max-num-batched-tokens chunks of pending uncached prefill work**, equivalent to \~17 seconds of queueing at peak chunk throughput. The chunk-count framing is invariant across hardware: any (model, accelerator) combination with the same `K=35` choice produces a threshold corresponding to the same multiple of single-chunk wall time. This matches the empirical observation in 5.3 that the override begins firing around QPS 50+, where TTFT-p90 is approaching the 30s range and the cluster is near compute saturation.
+286720 corresponds to T\_max \= 14s, i.e., "the threshold fires when keeping a sticky request would cause new arrivals to queue \~14 seconds of prefill work." Equivalently, since `τ = K × B` for some integer K and `T_max = K × T(B)`, the threshold can be expressed in chunks: **τ \= 35 × B \= 35 max-num-batched-tokens chunks of pending uncached prefill work**, equivalent to \~14 seconds of queueing at peak chunk throughput (35 × 0.40s). The chunk-count framing is invariant across hardware: any (model, accelerator) combination with the same `K=35` choice produces a threshold corresponding to the same multiple of single-chunk wall time. This matches the empirical observation in 5.3 that the override begins firing around QPS 50+, where TTFT-p90 is approaching the 30s range and the cluster is near compute saturation.
 
 ### 7.4 Portability across (model, accelerator)
 
@@ -249,26 +257,30 @@ is the dense matrix-multiply contribution (parameter-weighted, linear in `B`) an
 is the quadratic attention contribution (`L` transformer layers, `d_model` hidden width). `peak_tflops` is the vendor's bf16 peak for the chosen accelerator; `η_TP` is the combined MFU × collective-overhead efficiency at the chosen tensor-parallel degree (`{1: 0.60, 2: 0.55, 4: 0.48, 8: 0.38}` in our script). Then
 
 ![Google Corp Latex Equation:R\_{\\text{peak}} = \\frac{B}{T(B)}, \\qquad \\tau\_{\\text{sat}} = R\_{\\text{peak}} \\cdot T\_{\\max}][image18]  
-For Qwen3-32B (`N=32.8B`, `L=64`, `d_model=5120`), at B=8192 the linear term contributes \~537 TFLOPs and the attention term \~88 TFLOPs (≈14% of total). Real measurements typically beat the script's estimates by 10-20% on well-tuned stacks (our H100 deployment reflects MFU \~0.66 at TP=2, higher than the dict's 0.55 default; FlashAttention 3 and GQA reduce attention cost below the formula's MHA assumption). The estimated τ values in the table below are therefore conservative and would be revised upward with deployment-specific calibration.
+For Qwen3-32B (`N=32.8B`, `L=64`, `d_model=5120`), at B=8192 the linear term contributes \~537 TFLOPs and the attention term \~88 TFLOPs (≈14% of total). The script's estimated rows retain only the linear term: the attention share is overstated by the formula's MHA assumption (GQA and FlashAttention reduce it substantially in practice), so it is treated as absorbed into the `η_TP` uncertainty rather than modeled explicitly. Real measurements typically beat the script's estimates by 10-20% on well-tuned stacks (our H100 deployment reflects MFU \~0.66 at TP=2, higher than the dict's 0.55 default; FlashAttention 3 and GQA reduce attention cost below the formula's MHA assumption). The estimated τ values in the table below are therefore conservative and would be revised upward with deployment-specific calibration.
 
-| Setup | TP | T(B) | R\_peak | τ\_sat at T\_max=17s |
+| Setup | TP | T(B) | R\_peak | τ\_sat at T\_max=14s |
 | :---- | ----: | ----: | ----: | ----: |
-| Qwen3-32B / H100 (anchored) | 2 | 0.49s | 16.7k | **286,720** |
-| Qwen3-32B / H200 (estimated) | 2 | \~0.48s | \~17k | \~289,000 |
-| Qwen3-32B / B200 (estimated) | 2 | \~0.22s | \~38k | \~643,000 |
-| Qwen3-32B / A100 80GB (estimated) | 2 | \~1.53s | \~5.4k | \~91,000 |
-| Qwen3-32B / TPU v5e (estimated) | 8 | \~0.88s | \~9.4k | \~159,000 |
-| Qwen3-32B / TPU v5p (estimated) | 2 | \~1.04s | \~7.9k | \~134,000 |
-| Qwen3-32B / TPU v6e Trillium (estimated) | 4 | \~0.30s | \~27.5k | \~468,000 |
-| Llama3-8B / H100 (estimated) | 1 | \~0.22s | \~37k | \~630,000 |
+| Qwen3-32B / H100 (anchored) | 2 | 0.40s | 20.5k | **286,720** |
+| Qwen3-32B / H200 (estimated) | 2 | \~0.48s | \~17k | \~238,000 |
+| Qwen3-32B / B200 (estimated) | 2 | \~0.22s | \~38k | \~529,000 |
+| Qwen3-32B / A100 80GB (estimated) | 2 | \~1.53s | \~5.4k | \~75,000 |
+| Qwen3-32B / TPU v5e (estimated) | 8 | \~0.88s | \~9.4k | \~131,000 |
+| Qwen3-32B / TPU v5p (estimated) | 2 | \~1.04s | \~7.9k | \~110,000 |
+| Qwen3-32B / TPU v6e Trillium (estimated) | 4 | \~0.30s | \~27.5k | \~386,000 |
+| Llama3-8B / H100 (estimated) | 1 | \~0.22s | \~37k | \~519,000 |
+
+Since these experiments, llm-d ships measured `peakPrefillThroughput` values for its supported paths in the [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md). Two points from it sharpen the table above. First, where measurement and estimate overlap they land in the same range: TPU v6e measures 26,290 tok/s (at TP=8) against our \~27.5k estimate (at TP=4), and TPU v7x measures 27,336. Second, the matrix exposes a dimension the formula does not model: the **serving engine**. On the identical Qwen3-32B / H100 / TP=2 path, SGLang measures 30,720 tok/s where vLLM measures 15,928 (\~1.9×), and gpt-oss-120B measures 39,065 at TP=1 despite being the largest model listed, because it is a sparse MoE (\~5B active parameters, MXFP4) so a prefill step touches few weights. Engine efficiency, sparsity, and quantization all enter through what the formula folds into `η_TP`, which is why the matrix keys rows on (model, accelerator, engine) and why re-measuring beats estimating whenever the hardware is available.
+
+### 7.5 Why τ does not transplant
 
 The formula explains why a single τ value cannot transplant across deployments. Applying 286720 to Llama3-8B/H100 would set the threshold roughly 2× lower than appropriate for that hardware, the threshold would never fire because the pod has far more compute headroom than 286720 tokens of in-flight work would consume. Applying 286720 to Qwen3-32B/A100 would set the threshold \~4× higher than appropriate, the pod saturates well below 286720 of in-flight work, so 286720 as a valve fails to engage in time.
 
 ### 7.6 Recommendations
 
-- Calibrate per (model, accelerator, `max-num-batched-tokens`) combination by measuring `T(B)`. One run, single request, single prompt size.  
-- Choose `T_max` based on operator TTFT SLO degradation tolerance. We use 14s, corresponding to the TTFT degradation tolerance our b2b-saas operating range approaches at saturation. Workloads with stricter SLOs should use proportionally smaller T\_max.  
-- Do not transplant τ values across deployments without re-deriving.
+- Calibrate per (model, accelerator, engine, `max-num-batched-tokens`) combination by measuring `T(B)`. Check the shipped [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md) first, your combination may already be measured; otherwise run [`calibrate.sh`](https://github.com/llm-d/llm-d/tree/main/guides/recipes/router/calibration) against your deployed stack and set the reported value as `peakPrefillThroughput` on the filter.  
+- Choose `T_max` (`maxTTFTPenaltyMs`) based on operator TTFT SLO degradation tolerance. We use 14s, corresponding to the TTFT degradation tolerance our b2b-saas operating range approaches at saturation; the filter's shipped default is 18s. Workloads with stricter SLOs should use proportionally smaller T\_max.  
+- Do not transplant τ values (or `peakPrefillThroughput` values) across deployments without re-measuring.
 
 ---
 
@@ -278,14 +290,14 @@ The framework reduces a multi-dimensional tuning problem (which scorers, which w
 
 The `inference-perf` workload catalog (kubernetes-sigs/inference-perf) provides standardized workload generators covering a range of prompt/output distributions, multi-turn structures, and prefix-reuse patterns beyond the three we evaluated. We would prioritize:
 
-- **Tool-use / agentic workloads**: many short turns with moderate per-turn prompts, growing context. Tests whether the prefill-bound matched configuration remains correct when per-turn prompt growth shifts the bottleneck between regimes within a single conversation.  
+- **Tool-use / agentic workloads**: many short turns with moderate per-turn prompts, growing context. Tests whether the prefill-bound matched configuration remains correct when per-turn prompt growth shifts the bottleneck between regimes within a single conversation. Partially addressed since these experiments: the [agentic-serving guide](https://github.com/llm-d/llm-d/tree/main/guides/agentic-serving) now ships the prefill-bound matched configuration (token-load routing with offload-aware cache accounting and a calibrated `peakPrefillThroughput`) for agentic code-generation workloads on H200 and TPU v7, including P/D-disaggregated variants, with published benchmark results; a systematic study of regime shift within single conversations remains open.  
 - **Long-output summarization**: moderate-prompt, very-long-output workloads. Tests whether the decode-bound matched configuration holds when output token diversity (versus reasoning's concentrated chain-of-thought style) changes decode batching dynamics.  
 - **Mixed-traffic scenarios**: simultaneous code-gen-style and chat-style traffic on the same cluster. Tests whether per-route configuration selection is necessary or whether a single configuration can serve heterogeneous traffic adequately.  
 - **High-prefix-reuse production traces**: real chat-completion traffic where prefix-reuse rates are high but the corpus is unbounded (unlike b2b-saas's fixed 150-prompt corpus). Validates whether the matched configuration holds under realistic cache-management dynamics, or whether b2b-saas-style pathologies don't appear in practice.
 
-A secondary follow-up: characterizing the latency-predictor pipeline on high-variance production traffic where the bottleneck shifts dynamically. Our three benchmark workloads each sit in a single regime; production traffic often does not. The latency-predictor pipeline's per-request TTFT estimation may give it a structural advantage in such settings, outperforming any single matched configuration that's optimal for one regime but suboptimal for another, but we have not measured this. Reducing the pipeline's setup overhead (predictor training, sidecar deployment, model serving) would also lower the cost of deploying it as a workload-agnostic default.
+A secondary follow-up: characterizing the latency-predictor pipeline on high-variance production traffic where the bottleneck shifts dynamically. Our three benchmark workloads each sit in a single regime; production traffic often does not. The latency-predictor pipeline's per-request TTFT estimation may give it a structural advantage in such settings, outperforming any single matched configuration that's optimal for one regime but suboptimal for another, but we have not measured this. Reducing the pipeline's setup overhead (predictor training, sidecar deployment, model serving) would also lower the cost of deploying it as a workload-agnostic default; the current filter's `ttftSource: latencyPredictor` mode already removes the configuration-surface part of that overhead, though the predictor sidecars still need to be deployed and trained.
 
-A tertiary follow-up: per-accelerator τ calibration tables, distributed with the router, so operators don't need to run the calibration step themselves for common (model, accelerator) combinations. The formula is portable; the constants are not.
+A tertiary follow-up has shipped since these experiments were run: the [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md) distributed with the router records measured `peakPrefillThroughput` values for the (model, accelerator, engine) combinations llm-d supports, so operators on those paths don't need to run the calibration step themselves. The formula is portable; the constants are not — the matrix is how the constants now travel.
 
 ---
 
@@ -300,6 +312,8 @@ https://github.com/kaushikmitr/llm-d/tree/feature/vllm-optimized-benchmarking/ll
 https://github.com/kaushikmitr/llm-d/tree/feature/vllm-optimized-benchmarking/llm-d-benchmarking/workloads
 
 ### 9.3 Full result tables
+
+Per-workload result tables and analysis scripts live in the `analysis/` subdirectory of each workload:
 
 https://github.com/kaushikmitr/llm-d/tree/feature/vllm-optimized-benchmarking/llm-d-benchmarking/workloads
 
