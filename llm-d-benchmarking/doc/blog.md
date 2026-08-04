@@ -242,7 +242,7 @@ The formula requires one calibration run per (model, accelerator) combination. `
 
 ![][image14]
 
-Sample values for context. The H100/Qwen3-32B row is anchored to our calibration measurement; the other rows are estimated using the prefill compute model implemented in the portability script (`portability_script/portability.py`):  
+Sample values for context. The H100/Qwen3-32B row is anchored to our calibration measurement. The TPU v6e and v7x rows are measured values from the shipped [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md) (26290 and 27336 tok/s at TP=8, back-derived to T(B)); note the recipe measures through the full serving path and reads lower than the single-request fit used for the anchored row (see the reconciliation in 7.3), so τ from those rows is correspondingly conservative. The remaining rows are estimated using the prefill compute model implemented in the portability script (`portability_script/portability.py`):  
 ![Google Corp Latex Equation:T(B) = \\frac{F\_{\\text{linear}} + F\_{\\text{attention}}}{\\text{peak\_tflops} \\cdot \\text{TP} \\cdot \\eta\_{\\text{TP}} \\cdot 10^{12}}][image15]  
 where  
 ![Google Corp Latex Equation:F\_{\\text{linear}} = 2 \\cdot N\_{\\text{params}} \\cdot B][image16]
@@ -261,9 +261,8 @@ For Qwen3-32B (`N=32.8B`, `L=64`, `d_model=5120`), at B=8192 the linear term con
 | Qwen3-32B / H200 (estimated) | 2 | \~0.48s | \~17k | \~238,000 |
 | Qwen3-32B / B200 (estimated) | 2 | \~0.22s | \~38k | \~529,000 |
 | Qwen3-32B / A100 80GB (estimated) | 2 | \~1.53s | \~5.4k | \~75,000 |
-| Qwen3-32B / TPU v5e (estimated) | 8 | \~0.88s | \~9.4k | \~131,000 |
-| Qwen3-32B / TPU v5p (estimated) | 2 | \~1.04s | \~7.9k | \~110,000 |
-| Qwen3-32B / TPU v6e Trillium (estimated) | 4 | \~0.30s | \~27.5k | \~386,000 |
+| Qwen3-32B / TPU v6e (measured) | 8 | \~0.31s | \~26.3k | \~368,000 |
+| Qwen3-32B / TPU v7x (measured) | 8 | \~0.30s | \~27.3k | \~383,000 |
 | Llama3-8B / H100 (estimated) | 1 | \~0.22s | \~37k | \~519,000 |
 
 Since these experiments, llm-d ships measured `peakPrefillThroughput` values for its supported paths in the [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md). Two points from it sharpen the table above. First, where measurement and estimate overlap they land in the same range: TPU v6e measures 26,290 tok/s (at TP=8) against our \~27.5k estimate (at TP=4), and TPU v7x measures 27,336. Second, the matrix exposes a dimension the formula does not model: the **serving engine**. On the identical Qwen3-32B / H100 / TP=2 path, SGLang measures 30,720 tok/s where vLLM measures 15,928 (\~1.9×), and gpt-oss-120B measures 39,065 at TP=1 despite being the largest model listed, because it is a sparse MoE (\~5B active parameters, MXFP4) so a prefill step touches few weights. Engine efficiency, sparsity, and quantization all enter through what the formula folds into `η_TP`, which is why the matrix keys rows on (model, accelerator, engine) and why re-measuring beats estimating whenever the hardware is available.

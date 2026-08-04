@@ -58,29 +58,29 @@ def tau_sat(T_B: float, T_max_sec: float, B: int = 8192) -> tuple[float, int]:
 T_MAX = 14.0   # seconds, operator's TTFT degradation tolerance
 B = 8192       # max-num-batched-tokens
 
+# TPU v6e/v7x T(B) values are back-derived (T_B = B / peakPrefillThroughput) from
+# the measured entries in guides/recipes/router/calibration/configuration-matrix.md
+# (26290 and 27336 tok/s, Qwen3-32B at TP=8, vLLM). The recipe measures through the
+# full serving path (median TTFT of repeated requests) and reads lower than the
+# single-request fit used for the anchored H100 row (15928 vs 20480 on the same
+# H100 path), so tau values from these rows are correspondingly conservative.
 rows = [
-    # (label, model_B, hardware, tp, measured_T_B_or_None)
-    ('Qwen3-32B / H100 (measured)',          32, 'H100',    2, 0.40),
-    ('Qwen3-32B / H200 (estimated)',         32, 'H200',    2, None),
-    ('Qwen3-32B / B200 (estimated)',         32, 'B200',    2, None),
-    ('Qwen3-32B / A100 80GB (estimated)',    32, 'A100',    2, None),
-    ('Qwen3-32B / TPU v5e (estimated)',      32, 'TPU v5e', 8, None),
-    ('Qwen3-32B / TPU v5p (estimated)',      32, 'TPU v5p', 2, None),
-    ('Qwen3-32B / TPU v6e Trillium (est.)',  32, 'TPU v6e', 4, None),
-    ('Llama3-8B / H100 (estimated)',          8, 'H100',    1, None),
+    # (label, model_B, hardware, tp, T_B_or_None, kind)
+    ('Qwen3-32B / H100 (anchored)',       32, 'H100',    2, 0.40,         'anchored'),
+    ('Qwen3-32B / H200 (estimated)',      32, 'H200',    2, None,         'estimated'),
+    ('Qwen3-32B / B200 (estimated)',      32, 'B200',    2, None,         'estimated'),
+    ('Qwen3-32B / A100 80GB (estimated)', 32, 'A100',    2, None,         'estimated'),
+    ('Qwen3-32B / TPU v6e (measured)',    32, 'TPU v6e', 8, 8192 / 26290, 'measured'),
+    ('Qwen3-32B / TPU v7x (measured)',    32, 'TPU v7x', 8, 8192 / 27336, 'measured'),
+    ('Llama3-8B / H100 (estimated)',       8, 'H100',    1, None,         'estimated'),
 ]
 
 print(f"T_max = {T_MAX}s, B = {B}, dict = {tp_efficiency}\n")
 print(f"{'Setup':<35} {'TP':>3} {'T(B)':>8} {'R_peak':>10} {'τ_sat':>12}")
 print('-' * 75)
 
-for label, params_b, hw, tp, T_B_measured in rows:
-    if T_B_measured is not None:
-        T_B = T_B_measured
-        note = 'measured'
-    else:
-        T_B = estimate_T_B(params_b, hw, tp, B)
-        note = 'estimated'
+for label, params_b, hw, tp, T_B_given, kind in rows:
+    T_B = T_B_given if T_B_given is not None else estimate_T_B(params_b, hw, tp, B)
     R_peak, tau = tau_sat(T_B, T_MAX, B)
     print(f"{label:<35} {tp:>3} {T_B:>7.2f}s {R_peak/1000:>8.1f}k {tau:>11,}")
     
