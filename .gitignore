@@ -13,3 +13,4 @@ CLAUDE.md
 
 # helm chart directories via kustomize
 **/charts/
+__pycache__/
