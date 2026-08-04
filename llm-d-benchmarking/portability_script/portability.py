@@ -27,13 +27,14 @@ B = 8192       # max-num-batched-tokens on the reference paths
 MEASURED = [
     # (path, engine, tp, peakPrefillThroughput tok/s, source)
     ('gpt-oss-120B / H100',            'vLLM',   1, 39065, 'matrix'),
-    ('Qwen3-32B / H100',               'SGLang', 2, 30720, 'matrix'),
     ('Qwen3-32B / TPU v7x',            'vLLM',   8, 27336, 'matrix'),
     ('Qwen3-32B / TPU v6e',            'vLLM',   8, 26290, 'matrix'),
     ('GLM-5.2-NVFP4 / 8x B200',        'SGLang', 8, 24027, 'fleet'),
     ('Qwen3-32B / H100 (anchored)',    'vLLM',   2, 20480, 'anchored'),
     ('Qwen3-Coder-480B-FP8 / TPU v7x', 'vLLM',   8, 16444, 'guide'),
     ('Qwen3-VL-32B / H200',            'vLLM',   2, 15751, 'matrix'),
+    # Corrected: the matrix currently publishes 30720 for this path, 2x too high.
+    ('Qwen3-32B / H100',               'SGLang', 2, 15360, 'matrix'),
 ]
 
 
