@@ -236,40 +236,30 @@ For T\_max values:
 
 286720 corresponds to T\_max \= 14s, i.e., "the threshold fires when keeping a sticky request would cause new arrivals to queue \~14 seconds of prefill work." Equivalently, since `τ = K × B` for some integer K and `T_max = K × T(B)`, the threshold can be expressed in chunks: **τ \= 35 × B \= 35 max-num-batched-tokens chunks of pending uncached prefill work**, equivalent to \~14 seconds of queueing at peak chunk throughput (35 × 0.40s). The chunk-count framing is invariant across hardware: any (model, accelerator) combination with the same `K=35` choice produces a threshold corresponding to the same multiple of single-chunk wall time. This matches the empirical observation in 5.3 that the override begins firing around QPS 50+, where TTFT-p90 is approaching the 30s range and the cluster is near compute saturation.
 
-### 7.4 Portability across (model, accelerator)
+### 7.4 Portability across (model, accelerator, engine)
 
-The formula requires one calibration run per (model, accelerator) combination. `R_peak` captures everything hardware- and model-specific, compute throughput, attention efficiency, kernel quality, framework overhead, in a single number.
+The formula requires one calibration run per (model, accelerator, engine) combination. `R_peak` captures everything specific to the serving path, compute throughput, attention efficiency, kernel quality, framework overhead, in a single number.
 
 ![][image14]
 
-Sample values for context. The H100/Qwen3-32B row is anchored to our calibration measurement. The TPU v6e and v7x rows are measured values from the shipped [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md) (26290 and 27336 tok/s at TP=8, back-derived to T(B)); note the recipe measures through the full serving path and reads lower than the single-request fit used for the anchored row (see the reconciliation in 7.3), so τ from those rows is correspondingly conservative. The remaining rows are estimated using the prefill compute model implemented in the portability script (`portability_script/portability.py`):  
-![Google Corp Latex Equation:T(B) = \\frac{F\_{\\text{linear}} + F\_{\\text{attention}}}{\\text{peak\_tflops} \\cdot \\text{TP} \\cdot \\eta\_{\\text{TP}} \\cdot 10^{12}}][image15]  
-where  
-![Google Corp Latex Equation:F\_{\\text{linear}} = 2 \\cdot N\_{\\text{params}} \\cdot B][image16]
+Every row below is measured; none are estimates. The anchored row is our single-request fit from 7.3 (20,480 tok/s). The GLM-5.2 row was calibrated on a production Vertex AI serving fleet (SGLang with EAGLE speculative decoding, 8× B200 per pod, TP=8): ten \~32k-token cache-miss prefills through the full gateway path, median TTFT 1.369s, giving 24,027 tok/s per pod. The remaining rows are the measured `peakPrefillThroughput` values distributed with the router in the [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md), plus the [agentic-serving](https://github.com/llm-d/llm-d/tree/main/guides/agentic-serving) guide's TPU v7x calibration. Recipe-measured values read lower than a single-request fit of the same path (15,928 vs our 20,480 on the reference H100 path, reconciled in 7.3), so τ derived from them is conservative. Each value holds at the chunk size, TP, and quantization its deployment runs (the matrix paths use `max-num-batched-tokens=8192`; the GLM-5.2 fleet runs a 32k chunk): re-measure after changing any of them.
 
-is the dense matrix-multiply contribution (parameter-weighted, linear in `B`) and  
-![Google Corp Latex Equation:F\_{\\text{attention}} = 4 \\cdot L \\cdot d\_{\\text{model}} \\cdot B^2][image17]
+The spread makes the section's point sharper than any estimate could: `R_peak` is a property of the full serving path, not of the accelerator. On identical Qwen3-32B / H100 / TP=2 hardware, SGLang measures \~1.9× vLLM's prefill throughput. gpt-oss-120B posts the highest value in the table at TP=1 despite being the largest model listed, because it is a sparse MoE (\~5B active parameters, MXFP4) and a prefill step touches few weights. Architecture, engine, sparsity, and quantization all move the number, which is why the matrix keys rows on (model, accelerator, engine) and why one calibration Job beats an estimate whenever the hardware is available. (For hardware that cannot be measured yet, a FLOPs-based estimate can seed a starting value; `portability_script/portability.py` includes the model we used before these measurements existed.)
 
-is the quadratic attention contribution (`L` transformer layers, `d_model` hidden width). `peak_tflops` is the vendor's bf16 peak for the chosen accelerator; `η_TP` is the combined MFU × collective-overhead efficiency at the chosen tensor-parallel degree (`{1: 0.60, 2: 0.55, 4: 0.48, 8: 0.38}` in our script). Then
-
-![Google Corp Latex Equation:R\_{\\text{peak}} = \\frac{B}{T(B)}, \\qquad \\tau\_{\\text{sat}} = R\_{\\text{peak}} \\cdot T\_{\\max}][image18]  
-For Qwen3-32B (`N=32.8B`, `L=64`, `d_model=5120`), at B=8192 the linear term contributes \~537 TFLOPs and the attention term \~88 TFLOPs (≈14% of total). The script's estimated rows retain only the linear term: the attention share is overstated by the formula's MHA assumption (GQA and FlashAttention reduce it substantially in practice), so it is treated as absorbed into the `η_TP` uncertainty rather than modeled explicitly. Real measurements typically beat the script's estimates by 10-20% on well-tuned stacks (our H100 deployment reflects MFU \~0.66 at TP=2, higher than the dict's 0.55 default; FlashAttention 3 and GQA reduce attention cost below the formula's MHA assumption). The estimated τ values in the table below are therefore conservative and would be revised upward with deployment-specific calibration.
-
-| Setup | TP | T(B) | R\_peak | τ\_sat at T\_max=14s |
-| :---- | ----: | ----: | ----: | ----: |
-| Qwen3-32B / H100 (anchored) | 2 | 0.40s | 20.5k | **286,720** |
-| Qwen3-32B / H200 (estimated) | 2 | \~0.48s | \~17k | \~238,000 |
-| Qwen3-32B / B200 (estimated) | 2 | \~0.22s | \~38k | \~529,000 |
-| Qwen3-32B / A100 80GB (estimated) | 2 | \~1.53s | \~5.4k | \~75,000 |
-| Qwen3-32B / TPU v6e (measured) | 8 | \~0.31s | \~26.3k | \~368,000 |
-| Qwen3-32B / TPU v7x (measured) | 8 | \~0.30s | \~27.3k | \~383,000 |
-| Llama3-8B / H100 (estimated) | 1 | \~0.22s | \~37k | \~519,000 |
-
-Since these experiments, llm-d ships measured `peakPrefillThroughput` values for its supported paths in the [configuration matrix](https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/calibration/configuration-matrix.md). Two points from it sharpen the table above. First, where measurement and estimate overlap they land in the same range: TPU v6e measures 26,290 tok/s (at TP=8) against our \~27.5k estimate (at TP=4), and TPU v7x measures 27,336. Second, the matrix exposes a dimension the formula does not model: the **serving engine**. On the identical Qwen3-32B / H100 / TP=2 path, SGLang measures 30,720 tok/s where vLLM measures 15,928 (\~1.9×), and gpt-oss-120B measures 39,065 at TP=1 despite being the largest model listed, because it is a sparse MoE (\~5B active parameters, MXFP4) so a prefill step touches few weights. Engine efficiency, sparsity, and quantization all enter through what the formula folds into `η_TP`, which is why the matrix keys rows on (model, accelerator, engine) and why re-measuring beats estimating whenever the hardware is available.
+| Path | Engine | TP | `peakPrefillThroughput` (tok/s) | τ\_sat at T\_max=14s |
+| :---- | :---- | ----: | ----: | ----: |
+| gpt-oss-120B / H100 | vLLM | 1 | 39,065 | \~547,000 |
+| Qwen3-32B / H100 | SGLang | 2 | 30,720 | \~430,000 |
+| Qwen3-32B / TPU v7x | vLLM | 8 | 27,336 | \~383,000 |
+| Qwen3-32B / TPU v6e | vLLM | 8 | 26,290 | \~368,000 |
+| GLM-5.2-NVFP4 / 8× B200 | SGLang | 8 | 24,027 | \~336,000 |
+| Qwen3-32B / H100 (anchored) | vLLM | 2 | 20,480 | **286,720** |
+| Qwen3-Coder-480B-FP8 / TPU v7x | vLLM | 8 | 16,444 | \~230,000 |
+| Qwen3-VL-32B / H200 | vLLM | 2 | 15,751 | \~221,000 |
 
 ### 7.5 Why τ does not transplant
 
-The formula explains why a single τ value cannot transplant across deployments. Applying 286720 to Llama3-8B/H100 would set the threshold roughly 2× lower than appropriate for that hardware, the threshold would never fire because the pod has far more compute headroom than 286720 tokens of in-flight work would consume. Applying 286720 to Qwen3-32B/A100 would set the threshold \~4× higher than appropriate, the pod saturates well below 286720 of in-flight work, so 286720 as a valve fails to engage in time.
+The table explains why a single τ value cannot transplant across deployments, even deployments sharing hardware. Moving our 286,720 onto the SGLang build of the same Qwen3-32B / H100 path would set the threshold \~1.5× too low: that path drains \~430,000 tokens within the same 14s budget, so the valve would fire while the warm pod still had headroom, giving up cache affinity too early. Moving it onto the Qwen3-VL-32B / H200 path would set it \~1.3× too high: that pod saturates near 221,000 tokens of in-flight work, so the valve would engage late and new arrivals would queue past the SLO ceiling. The same reversal appears within one accelerator family: TPU v7x supports τ \= 383,000 serving Qwen3-32B but only 230,000 serving Qwen3-Coder-480B.
 
 ### 7.6 Recommendations
 

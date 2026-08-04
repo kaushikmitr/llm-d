@@ -1,41 +1,57 @@
 #!/usr/bin/env python3
 """
-Compute τ_sat = R_peak × T_max for the §7.4 portability table.
+Compute τ_sat = peakPrefillThroughput × T_max for the §7.4 portability table.
 
-Uses the prefill compute model from the user's earlier draft:
+Every row is a measured serving path; sources:
+- 'anchored' — our single-request TTFT fit (§7.3): R_peak = B / T(B) = 8192 / 0.40s.
+- 'matrix'   — measured peakPrefillThroughput values distributed with the router
+               (guides/recipes/router/calibration/configuration-matrix.md).
+- 'guide'    — the agentic-serving guide's TPU v7x calibration.
+- 'fleet'    — production Vertex AI B200 fleet calibration (GLM-5.2-NVFP4,
+               SGLang with EAGLE spec-decode, 8×B200 per pod, 32k chunk):
+               ten ~32k-token cache-miss prefills through the full gateway
+               path, median TTFT 1.369s.
 
-    total_flops      = 2 × params × B
-    effective_tflops = peak_tflops × tp × tp_efficiency
-    T(B)             = total_flops / (effective_tflops × 1e12)
-    R_peak           = B / T(B)
-    τ_sat            = R_peak × T_max
+Matrix/guide/fleet values are measured through the full serving path (median
+TTFT of repeated requests) and read lower than a single-request fit of the
+same path (15,928 vs 20,480 on the reference H100 path), so τ values derived
+from them are conservative.
 
-For Qwen3-32B / H100 / TP=2: T(B) is taken from direct measurement
-(0.40s), not from the formula — the script's tp_efficiency dict is
-conservative (implied MFU 0.55 at TP=2; actual measured MFU ~0.66).
-The other rows use the formula since no measurements are available.
+estimate_T_B() below retains the FLOPs model used before these measurements
+existed; it can seed a starting value for hardware with no measurement yet.
 """
 
-# vendor peak bf16 TFLOPS
-hardware_tflops = {
-    'H100': 989,    # H100 SXM (80GB)
-    'H200': 989,    # H200 SXM — same compute as H100, more HBM (141GB)
-    'B200': 2200,   # Blackwell, 192GB
-    'A100': 312,    # A100 SXM (80GB)
+T_MAX = 14.0   # seconds, operator's TTFT degradation tolerance
+B = 8192       # max-num-batched-tokens on the reference paths
+
+MEASURED = [
+    # (path, engine, tp, peakPrefillThroughput tok/s, source)
+    ('gpt-oss-120B / H100',            'vLLM',   1, 39065, 'matrix'),
+    ('Qwen3-32B / H100',               'SGLang', 2, 30720, 'matrix'),
+    ('Qwen3-32B / TPU v7x',            'vLLM',   8, 27336, 'matrix'),
+    ('Qwen3-32B / TPU v6e',            'vLLM',   8, 26290, 'matrix'),
+    ('GLM-5.2-NVFP4 / 8x B200',        'SGLang', 8, 24027, 'fleet'),
+    ('Qwen3-32B / H100 (anchored)',    'vLLM',   2, 20480, 'anchored'),
+    ('Qwen3-Coder-480B-FP8 / TPU v7x', 'vLLM',   8, 16444, 'guide'),
+    ('Qwen3-VL-32B / H200',            'vLLM',   2, 15751, 'matrix'),
+]
+
+
+# --- FLOPs-based seeding estimate (pre-measurement fallback only) ---
+
+hardware_tflops = {   # vendor peak bf16 TFLOPS
+    'H100': 989,
+    'H200': 989,
+    'B200': 2200,
+    'A100': 312,
     'MI300X': 1307,
     'TPU v5e': 197,
     'TPU v5p': 459,
-    'TPU v6e': 918, # Trillium
+    'TPU v6e': 918,
 }
 
-# Combined MFU × collective-overhead per TP degree.
-# Slightly conservative — real H100/TP=2 hits ~0.66 vs the 0.55 here.
-tp_efficiency = {
-    1: 0.60,   # base MFU, no collective overhead
-    2: 0.55,   # minor TP overhead
-    4: 0.48,   # noticeable
-    8: 0.38,   # heavy
-}
+# Combined MFU × collective-overhead per TP degree (conservative).
+tp_efficiency = {1: 0.60, 2: 0.55, 4: 0.48, 8: 0.38}
 
 
 def estimate_T_B(model_params_b: float, hardware: str, tp: int, B: int = 8192) -> float:
@@ -43,44 +59,13 @@ def estimate_T_B(model_params_b: float, hardware: str, tp: int, B: int = 8192) -
     peak = hardware_tflops[hardware]
     total_flops = 2 * (model_params_b * 1e9) * B
     eff = tp_efficiency.get(tp, 0.60 * (0.85 ** (tp // 2)))
-    effective_cluster_tflops = peak * tp * eff
-    return total_flops / (effective_cluster_tflops * 1e12)
+    return total_flops / (peak * tp * eff * 1e12)
 
 
-def tau_sat(T_B: float, T_max_sec: float, B: int = 8192) -> tuple[float, int]:
-    """Return (R_peak in tok/s, τ_sat in tokens)."""
-    R_peak = B / T_B
-    return R_peak, int(R_peak * T_max_sec)
-
-
-# === Configurations in the §7.4 table ===
-
-T_MAX = 14.0   # seconds, operator's TTFT degradation tolerance
-B = 8192       # max-num-batched-tokens
-
-# TPU v6e/v7x T(B) values are back-derived (T_B = B / peakPrefillThroughput) from
-# the measured entries in guides/recipes/router/calibration/configuration-matrix.md
-# (26290 and 27336 tok/s, Qwen3-32B at TP=8, vLLM). The recipe measures through the
-# full serving path (median TTFT of repeated requests) and reads lower than the
-# single-request fit used for the anchored H100 row (15928 vs 20480 on the same
-# H100 path), so tau values from these rows are correspondingly conservative.
-rows = [
-    # (label, model_B, hardware, tp, T_B_or_None, kind)
-    ('Qwen3-32B / H100 (anchored)',       32, 'H100',    2, 0.40,         'anchored'),
-    ('Qwen3-32B / H200 (estimated)',      32, 'H200',    2, None,         'estimated'),
-    ('Qwen3-32B / B200 (estimated)',      32, 'B200',    2, None,         'estimated'),
-    ('Qwen3-32B / A100 80GB (estimated)', 32, 'A100',    2, None,         'estimated'),
-    ('Qwen3-32B / TPU v6e (measured)',    32, 'TPU v6e', 8, 8192 / 26290, 'measured'),
-    ('Qwen3-32B / TPU v7x (measured)',    32, 'TPU v7x', 8, 8192 / 27336, 'measured'),
-    ('Llama3-8B / H100 (estimated)',       8, 'H100',    1, None,         'estimated'),
-]
-
-print(f"T_max = {T_MAX}s, B = {B}, dict = {tp_efficiency}\n")
-print(f"{'Setup':<35} {'TP':>3} {'T(B)':>8} {'R_peak':>10} {'τ_sat':>12}")
-print('-' * 75)
-
-for label, params_b, hw, tp, T_B_given, kind in rows:
-    T_B = T_B_given if T_B_given is not None else estimate_T_B(params_b, hw, tp, B)
-    R_peak, tau = tau_sat(T_B, T_MAX, B)
-    print(f"{label:<35} {tp:>3} {T_B:>7.2f}s {R_peak/1000:>8.1f}k {tau:>11,}")
-    
+if __name__ == '__main__':
+    print(f"T_max = {T_MAX}s\n")
+    print(f"{'Path':<32} {'Engine':<7} {'TP':>3} {'R_peak':>8} {'τ_sat':>10}")
+    print('-' * 66)
+    for path, engine, tp, r_peak, source in MEASURED:
+        tau = int(r_peak * T_MAX)
+        print(f"{path:<32} {engine:<7} {tp:>3} {r_peak:>7,}  {tau:>9,}")
