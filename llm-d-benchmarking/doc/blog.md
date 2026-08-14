@@ -1,4 +1,4 @@
-# Stick or Spill: Token-Aware Routing for LLM Inference
+# Sticky Until Saturated: Token-Aware Routing in llm-d
 
 *How the llm-d router balances KV-cache affinity against token load*
 
