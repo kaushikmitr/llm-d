@@ -206,7 +206,7 @@ The second figure shows the resource that sets llm-d's peak. Its throughput rise
 
 ### The load the harness delivered
 
-inference-perf's conversation replay (v0.7.0) advances conversations in lockstep when used as documented, so the runs set the concurrency to four times the number of conversations, run 20 turns per conversation and use 32 worker processes; the engines still never see more than one request per conversation. With that, the harness kept 86 to 92% of the configured sessions in flight, with 4 to 7 s of idle time per turn beyond the tool pause at the peaks and 13 s at the collapsed levels; the decomposition carries this as the client factor, so the ranking does not depend on it.
+inference-perf's conversation replay (v0.7.0) advances conversations in lockstep when used as documented, so the runs set the concurrency to four times the number of conversations, run 20 turns per conversation and use 32 worker processes; the engines still never see more than one request per conversation. With that, the harness kept 86 to 92% of the configured sessions in flight, with 4 to 7 s of idle time per turn beyond the tool pause at the peaks and 13 s at the collapsed levels; the decomposition carries this as the client factor, so the ranking does not depend on it. The upstream fix, one closed loop per conversation that records its own idle time, would make the workaround unnecessary.
 
 ### Where the loss is
 
@@ -250,7 +250,7 @@ The split then names the lever:
 | Sessions idle beyond their tool pause, few requests in flight | Client | The load generator, not the stack. Fix it before concluding anything. |
 | All three factors near one and η still low | The ceiling | The hardware is what it is. Compare deployments, not stacks. |
 
-Section 6 is this procedure applied once. The scripts, configs and results that did it are in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce).
+Section 6 is this procedure applied once. Doing it took an effort like this post; the scripts, configs and calibration jobs that did it are in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce), so the next one is cheaper.
 
 ## 8. What the ceiling leaves out
 
@@ -267,16 +267,7 @@ The ceiling is a first-order bound on purpose: it keeps the terms that decide wh
 
 None of these changes the order of the stacks or the hit-rate finding. They bound how far the 0.47 could move, and only the last matters at first order.
 
-## 9. Open work
-
-Computing η for a stack took an effort like this one. The scripts, configs and calibration jobs that did it, the decode bandwidth calibration included, are in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce), so the next one is cheaper. Four things are still missing.
-
-- **A load generator that delivers the configured load.** The conversation replay used here needed a workaround to keep conversations out of lockstep (Section 6) and still left 4 to 13 s of idle time per turn beyond the tool pause; one closed loop per conversation, with its idle time recorded, would make the client factor the load's own.
-- **A cost model at routing time.** Stacks encode the price of moving KV as hand-calibrated thresholds, a peak prefill throughput here and a minimum cached-token delta there; a per-request comparison in one unit, such as the companion derivation's spill rule, has not been validated.
-- **A cross-engine KV format.** KV written by one engine cannot in general be read by another, or at another tensor-parallel degree, block size or quantisation, so a wire format carrying that metadata is the prerequisite for any fleet-wide tier.
-- **A benchmark suite that states its prefix structure and its ρ.** Workloads need their session and turn counts, prefix-length distribution and inter-turn gap specified, with the oracle overlap published alongside; the kit's oracle script computes it for any trace.
-
-## 10. Conclusion
+## 9. Conclusion
 
 The roofline framework reduces serving evaluation to one ratio, η, and splits its shortfall into three factors: the load the client offered, reuse, and the engine. Infrastructure engineers get a diagnostic that says which lever to pull: routing and eviction policy when reuse is lost, scheduling when the engine is, and retention and offload when the peak is set by how many sessions the system can hold. Vendors get a number comparable across stacks and hardware, provided the workload's ρ, I and O, the calibration and the client's offered load are published with it. On the B200 fleet measured here, the ranking llm-d 0.47, Dynamo 0.22, round-robin 0.14 is set by the hit rate each stack kept. llm-d's remaining gap splits between load the client did not offer and an engine that slows as HBM fills with the sessions it is decoding; the other two peak at lower loads because added sessions turn into recompute.
 
