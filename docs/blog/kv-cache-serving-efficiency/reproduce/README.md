@@ -1,6 +1,6 @@
 # Reproducing the measurement
 
-## Doing this for your own workload (Section 6 of the post)
+## Doing this for your own workload (Section 7 of the post)
 
 Four steps, each one script or one job, give η and its split for any workload on any deployment.
 
@@ -20,10 +20,10 @@ The split then names the lever:
 | Sessions idle beyond their tool pause, few requests in flight | Client | The load generator, not the stack. Fix it before concluding anything. |
 | All three factors near one and η still low | The ceiling | The hardware is what it is. Compare deployments, not stacks. |
 
-Section 5 is this procedure applied once.
+Section 6 is this procedure applied once.
 
 ## Scripts, by step
-Everything used for the post, arranged by the four steps of its Section 6. Paths below are relative to this folder. Set `KUBE_CONTEXT` (and `NAMESPACE`, default `kv-fleet`) before running anything that talks to a cluster.
+Everything used for the post, arranged by the four steps of its Section 7. Paths below are relative to this folder. Set `KUBE_CONTEXT` (and `NAMESPACE`, default `kv-fleet`) before running anything that talks to a cluster.
 
 ## 1. Characterise the trace
 
@@ -42,7 +42,7 @@ One replica, same flags as the fleet.
 
 ## 3. Compute the ceiling
 
-`analysis/ceiling_v2.py` prints R per GPU and per fleet, the batch at which capacity binds, the compute share there, the paused-session KV the host tier must hold, the ideal throughput-against-batch curve, the two capacity walls, the Section 7.1 thresholds and the rule check. Hardware constants are in `analysis/ceilings.py` (`HW` table) and at the top of `ceiling_v2.py`; the workload's I, O and ρ are set there too. The expert-weight term counts every token in a step, decode and prefill alike.
+`analysis/ceiling_v2.py` prints R per GPU and per fleet, the batch at which capacity binds, the compute share there, the paused-session KV the host tier must hold, the ideal throughput-against-batch curve, the two capacity walls, the Section 5.1 thresholds and the rule check. Hardware constants are in `analysis/ceilings.py` (`HW` table) and at the top of `ceiling_v2.py`; the workload's I, O and ρ are set there too. The expert-weight term counts every token in a step, decode and prefill alike.
 
 ## 4. Sweep the load and split the shortfall
 

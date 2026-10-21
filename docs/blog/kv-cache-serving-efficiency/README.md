@@ -36,7 +36,7 @@ The industry has built specialised solutions at three layers of the stack:
 
 Seen from the KV cache, these are facets of one placement problem, and the question for any of them, alone or combined, is the same: how close does the fleet get to the throughput its hardware allows for this workload?
 
-That ceiling can be computed. Section 2 derives it, works it out for one B200 fleet and defines serving efficiency against it. Section 3 splits the shortfall into three factors. Section 4 is one page on where KV can be and what each move costs. Section 5 measures three stacks on the fleet. Section 6 turns the method into a procedure for any workload. Section 7 reads the runs on the roofline, compute against memory. Section 8 lists what the ceiling leaves out, Section 9 the open work, and Section 10 concludes. Appendix A holds the inputs and their calibration, Appendix B the derivation.
+That ceiling can be computed. Section 2 derives it, works it out for one B200 fleet and defines serving efficiency against it. Section 3 splits the shortfall into three factors. Section 4 is one page on where KV can be and what each move costs. Section 5 reads a run on the roofline, compute against memory. Section 6 measures three stacks on the fleet. Section 7 turns the method into a procedure for any workload. Section 8 lists what the ceiling leaves out, Section 9 the open work, and Section 10 concludes. Appendix A holds the inputs and their calibration, Appendix B the derivation.
 
 ## 2. The ceiling and η
 
@@ -63,15 +63,15 @@ Serving efficiency η is one number per workload and hardware: the tokens per se
 
 | Symbol | Meaning | How it is obtained |
 | --- | --- | --- |
-| I, O | Mean prompt and output length of the workload, in tokens, token-weighted over requests | From the trace or the request bodies; the harness's output count is not trusted (Section 5) |
+| I, O | Mean prompt and output length of the workload, in tokens, token-weighted over requests | From the trace or the request bodies; the harness's output count is not trusted (Section 6) |
 | ρ | Intrinsic overlap: the prefix hit rate an oracle with unlimited retention would reach on this trace | Computed from the trace once, at fleet capacity |
 | h | Prefix-cache hit rate the system achieved, token-weighted | The engine's own counters: cached prompt tokens over prompt tokens |
 | R | The ceiling: tokens per second per accelerator at the first saturated resource, with h = ρ. R alone means R(ρ); R(h) is the same formula at a run's achieved hit rate | Appendix B, from the calibrated inputs of Appendix A |
 | η | Serving efficiency: achieved tokens per second per accelerator over R | Peak steady-state throughput over a sweep of offered load, divided by R |
 
-R is evaluated at the workload's intrinsic overlap ρ, not at the hit rate the system achieved, so any reuse the system fails to find, keep or share shows up as a shortfall from R. It rests on three idealisations, each of which makes it an upper bound: KV occupies HBM only while its request is decoding, with paused sessions held elsewhere at no cost; prefill is spread evenly over the steps rather than run in whole chunks; and compute and memory traffic overlap fully within a step, so a step takes the longer of the two. Smaller omissions are listed in Section 8. Whether the workload is compute-bound or memory-bound is a property of the workload and the hardware, given by the rule of Section 7.1 at the ceiling's batch. How much a system serves depends on load, so η is taken at the peak of a sweep: record steady-state throughput at each of several offered loads and divide the highest by R.
+R is evaluated at the workload's intrinsic overlap ρ, not at the hit rate the system achieved, so any reuse the system fails to find, keep or share shows up as a shortfall from R. It rests on three idealisations, each of which makes it an upper bound: KV occupies HBM only while its request is decoding, with paused sessions held elsewhere at no cost; prefill is spread evenly over the steps rather than run in whole chunks; and compute and memory traffic overlap fully within a step, so a step takes the longer of the two. Smaller omissions are listed in Section 8. Whether the workload is compute-bound or memory-bound is a property of the workload and the hardware, given by the rule of Section 5.1 at the ceiling's batch. How much a system serves depends on load, so η is taken at the peak of a sweep: record steady-state throughput at each of several offered loads and divide the highest by R.
 
-Which resource a saturated run is pressing on can be read from the engine instead of inferred from latency. Requests waiting for KV blocks mean capacity. A step time that grows with the number and length of resident contexts, with HBM traffic near the calibrated bandwidth, means bandwidth. Steps filled with prefill chunks at the calibrated prefill rate, with HBM traffic low, mean compute. The runs of Section 5 show all three, and the measured roofline in Section 2 is the same reading drawn.
+Which resource a saturated run is pressing on can be read from the engine instead of inferred from latency. Requests waiting for KV blocks mean capacity. A step time that grows with the number and length of resident contexts, with HBM traffic near the calibrated bandwidth, means bandwidth. Steps filled with prefill chunks at the calibrated prefill rate, with HBM traffic low, mean compute. The runs of Section 6 show all three, and the measured roofline in Section 5 is the same reading drawn.
 
 ### The ceiling for the B200 fleet
 
@@ -79,9 +79,9 @@ On the B200 deployment calibrated in Appendix A, the agentic workload (I = 117k,
 
 What it would take to reach R, in one picture: the figure draws the throughput the step-time law allows at h = ρ as the number of sequences decoding per replica grows. The line rises with the batch, because every step reads the weights once however many sequences share it, and ends where the batch fills HBM, at 29 sequences. A fleet whose HBM also had to hold the paused sessions would stop at 13; the host tier moves the wall. Reaching R therefore means three things: keep HBM for decoding sequences only, hold enough sessions that 29 of them are decoding per replica (about 54 live per replica, 320 in the fleet), and keep each step at the memory-read time the law assumes. The measured runs show which of these the stacks managed. llm-d at 120 sessions sits on the line with six decoding; at 180 it ran twelve but delivered 0.71 of what twelve allow, and at 240 eighteen at 0.52, as the engine's step times grew with chunked prefill and host-tier copies and then preemption. Dynamo and round-robin never pass twelve, because their lost reuse turns added sessions into recompute. Three consequences follow from the same law: without the host tier the wall sits at 13 sequences and the ceiling at 0.69 of R; FP8 KV halves the bytes per token and doubles the batch HBM holds, but raises R only 1.6 times, because compute then binds; and a stack that sustains twelve decoding per replica at the law's step time reaches 0.66 of R, so llm-d's 0.47 at that batch means its steps ran 1.4 times longer than the law allows.
 
-![ideal curve from the step-time law of Appendix B at h = ρ for the B200 fleet of Appendix A; measured points from the nine runs of this section, at the mean number of requests decoding per replica over the steady window](figures/fig4c-ideal-throughput-vs-batch.png)
+![ideal curve from the step-time law of Appendix B at h = ρ for the B200 fleet of Appendix A; measured points from the nine runs of Section 6, at the mean number of requests decoding per replica over the steady window](figures/fig4c-ideal-throughput-vs-batch.png)
 
-*ideal curve from the step-time law of Appendix B at h = ρ for the B200 fleet of Appendix A; measured points from the nine runs of this section, at the mean number of requests decoding per replica over the steady window*
+*ideal curve from the step-time law of Appendix B at h = ρ for the B200 fleet of Appendix A; measured points from the nine runs of Section 6, at the mean number of requests decoding per replica over the steady window*
 
 ### Reporting η
 
@@ -95,7 +95,7 @@ For η to be comparable across systems it must be published with: the Appendix A
 - **Reuse, (Z + T\_ideal)/(Z + T\_h).** Time lost recomputing prompt tokens, either because the request went to a replica that did not hold their KV or because it had been evicted.
 - **Engine, (Z + T\_h)/(Z + T).** Everything else the engine lost at the hit rate it had.
 
-The split uses no measured batch size, which depends on how fast the server is, and no assumption about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity. Section 5 computes all three factors for every run.
+The split uses no measured batch size, which depends on how fast the server is, and no assumption about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity. Section 6 computes all three factors for every run.
 
 ## 4. Where KV can be
 
@@ -113,7 +113,49 @@ A prompt token's KV is in one of three places relative to the replica that will 
 
 Eviction is not a move. It is what happens when every tier is full: a block is dropped, its next use pays a full recompute, and the only decision left is which block to drop.
 
-## 5. Empirical evaluation: three stacks on a B200 fleet
+## 5. Compute or memory: where a run sits on the roofline
+
+Section 5.1 draws the line between compute-bound and memory-bound from U, L, O and the batch size. The hit rate affects it only through U: ρ places the ceiling, and a run's measured h places that run.
+
+![Section 6 runs on the B200 fleet, cluster106, 20 October 2026 · FLOPs and bytes derived from sampled engine counters and the model shape (Appendix A); tokens restored from the host tier are not counted as recomputed · 9 runs, 3 stacks](figures/fig1-measured-roofline.png)
+
+*Section 6 runs on the B200 fleet, cluster106, 20 October 2026 · FLOPs and bytes derived from sampled engine counters and the model shape (Appendix A); tokens restored from the host tier are not counted as recomputed · 9 runs, 3 stacks*
+
+The figure places the nine fleet runs of Section 6 on the hardware's roofline by their measured arithmetic intensity and achieved compute. The dashed roofs are the B200 datasheet; the solid roofs are what this deployment was measured to reach. For compute, that is 22,794 prefill tokens per second at a 128k context, converted to FLOP/s. For memory, it is 4.2 TB/s per GPU, the rate at which decode steps actually read KV from HBM in the calibration runs, 53% of the datasheet's 8 TB/s. The compute roof is evaluated near the runs' mean context (110k to 124k tokens). Prompts range from about 34k at p10 to 251k at p99, and per-token prefill slows as context grows, so a roof weighted by the actual mix of contexts would sit a few percent lower.
+
+At a 0.98 hit rate the fleet sits on the bandwidth roof: each step streams the attention and projection weights, the experts its tokens select, and the KV of only about six decoding requests per replica, to produce one token each, so every byte read serves few FLOPs. As the hit rate falls, the same workload moves right and up, across the ridge, the arithmetic intensity at which the bandwidth roof meets the compute roof (about 290 FLOP/B on the measured roofs), onto the compute roof. The GPUs get busier and the useful token rate gets lower, because the compute is recomputing contexts that were evicted. The hit rate decides where on the roofline a serving system lands. A point left of the ridge (AI below 290) spent longer reading memory than computing in its steps; a point right of it spent longer computing.
+
+Which resource binds first follows from the rule of Section 5.1, which compares the uncached input per output token with the context. For the agentic trace of Section 6 the context is long, about 117k tokens, and with the hit rate near ρ a turn prefills only about 7k of it, so the fleet is memory-bound: reuse has removed the prefill, and the limit is how much KV the fleet can hold and how fast it can read it. A stack that loses reuse pushes the same trace across the rule's threshold into compute-bound, because recomputing the context becomes the work. The ceiling R of Section 2 is the throughput at which the first of the three resources saturates with h = ρ. Compute-bound and memory-bound in this post describe that ceiling, not a run; a run can sit far below the ceiling on either side. In an engine the three resources show up as settings, though not one to one:
+
+| Engine setting | What it bounds in one step | The wall it stands for | On the B200 fleet of Section 6 |
+| --- | --- | --- | --- |
+| KV blocks (HBM left after weights and activations) | Resident KV tokens: blocks × block size, here 3,403,712 tokens per replica | Capacity, exactly | The binding wall: 29 decoding contexts of 117k tokens fit, and paused sessions' KV competes for the same blocks; the engine reports it as requests waiting for capacity |
+| max\_num\_batched\_tokens (8,192) | Prefill tokens admitted per step, the chunk | None; it is how compute is spent per step | Never limits throughput, since total prefill FLOP/s is fixed; it sets how long a step with a chunk stalls every decode in it (220 to 310 ms, Appendix A) |
+| max\_num\_seqs (64) | Sequences in one step | A stand-in for bandwidth: caps the contexts a step must read, so caps step time | Never binds here: capacity admits 29; it would bind only below about 53k tokens of context |
+
+The compute wall has no setting. The prefill rate at a given context length is what the hardware and kernels deliver; the engine only chooses how much of it to spend per step. These three costs become the ceiling through one rule, called the step-time law in this post: a step takes the longer of its compute time and its memory time, and the throughput a replica sustains is the most it can push through while every step stays within compute, bandwidth and HBM capacity. The rule and the equations for where the walls fall are in Appendix B.
+
+### 5.1 Where the walls are
+
+The boundary between compute-bound and memory-bound has a closed form in terms of one hardware number, the ridge of the Section 5 figure expressed as a token count, the **ridge** r: the number of KV tokens the device can read from HBM in the time it takes to prefill one token,
+
+```latex
+r = \frac{\text{HBM bandwidth} / \text{KV bytes per token}}{\text{prefill tokens per second}}
+```
+
+r depends on the hardware and the model and on nothing else; no hit rate appears in it. For Qwen3-Coder-480B on 8 × B200, 0.53 × 64 TB/s of achieved bandwidth over 254 KB of KV per token is 133 million KV tokens per second, against a calibrated prefill rate of 37,217 tokens per second, so r is about 3,600; for Qwen3-32B on 2 × H100 it is 1,123. (The prefill rate falls with context length, so r grows with L; at a 128k context the B200 figure would be about 5,800, which lowers the agentic threshold below from 45 to 28 and changes no conclusion.) One more cost belongs on the memory side: every step streams the weights it touches, W\_b bytes, once, shared by the n sequences decoding in it (for a mixture of experts, the experts touched by every token in the step, the prefill tokens included, so W\_b is evaluated at n(1 + U/O) tokens), so per sequence it reads like W\_b/(n·b) extra tokens of context, where b is the KV bytes per token (254 KB here). With that folded into an effective context L\_eff = L + W\_b(n)/(n·b), compute takes longer than the memory read in a step, and is said to dominate it, when
+
+```latex
+\frac{U}{O} > \frac{L + W_b(n)/(n\,b)}{r} - 1
+```
+
+that is, when the uncached input per output token exceeds the effective context measured in ridges, less one. Which term dominates depends on the batch n; a workload is called compute-bound or memory-bound only at the ceiling, where n is fixed and the dominating term has reached its limit. Capacity is not in the rule: it caps how many sequences a replica can hold, n ≤ C/(L·b), and enters the ceiling as a separate condition (Appendix B). For the agentic workload of Section 6 (L = 117k, U = 7.5k, O = 386), U/O = 19 against a threshold of 50 at the ceiling's batch of 29, so it is memory-bound; the runs in its table where compute dominates are recompute, not work. The figure folds the batch size into colour: for every context length and U/O it shows the smallest decoding concurrency at which compute dominates, and grey where memory dominates at every batch the memory fits. The nine fleet runs are placed by their measured hit rates: llm-d's runs up to 240 sessions sit in the grey, and the Dynamo and round-robin runs and llm-d at 300 sessions sit in the n = 1 band, where recompute dominates at any batch.
+
+![the smallest decoding concurrency n at which U/O > (L + W_b(n)/(n·b))/r − 1 holds, for the B200 deployment of Appendix A (r = 3,600, W_b(n) from the expert-count formula of Appendix B, n capped by KV capacity and the engine's 64-sequence limit) · fleet runs from Section 6 placed by their measured hit rates (U = (1 − h)·I, h counting HBM and host-tier hits) · compute against bandwidth only; the capacity wall is a separate condition](figures/fig2-wall-map.png)
+
+*the smallest decoding concurrency n at which U/O > (L + W_b(n)/(n·b))/r − 1 holds, for the B200 deployment of Appendix A (r = 3,600, W_b(n) from the expert-count formula of Appendix B, n capped by KV capacity and the engine's 64-sequence limit) · fleet runs from Section 6 placed by their measured hit rates (U = (1 − h)·I, h counting HBM and host-tier hits) · compute against bandwidth only; the capacity wall is a separate condition*
+
+## 6. Empirical evaluation: three stacks on a B200 fleet
 
 ### Headline result
 
@@ -197,13 +239,13 @@ Three factors per run, as defined in Section 3. Z is the time from a turn's last
 | round-robin Service | 90 | 0.62 | 19.8 s | 34.0 s | 0.29 | 0.81 | 0.64 | 0.15 |
 | round-robin Service | 120 | 0.53 | 27.6 s | 55.9 s | 0.32 | 0.67 | 0.66 | 0.14 |
 
-The split reads this way. The client factor is the load's own: at llm-d's peak the sessions and their idle time asked for 0.69 of the ceiling. Within that, llm-d lost nothing to reuse up to 240 sessions and 32 to 39% to the engine, the time requests spend waiting to be scheduled and, past 240, preempted; at 300 it also lost 31% to reuse. Dynamo and round-robin peak at lower loads, so their client factor is 0.29 to 0.39; past their peaks, added sessions turn into recompute (reuse 0.92 to 0.67) while the engine factor stays at 0.64 to 0.77. One idealisation of Section 2 shows in the table: the step-time law spreads prefill evenly across decode steps, so at a small batch recompute hides under the memory time and the reuse factor understates it, as for Dynamo at 60 sessions (hit rate 0.76, reuse 0.95); the engine factor carries it instead. At 120 sessions llm-d's 0.98 is the oracle's own hit rate over the window, so its reuse is 1.00. The rule of Section 7.1, applied to each run's measured hit rate, context and batch size, puts all nine runs on the same side of the measured ridge (about 290 FLOP/B, where the solid roofs of the Section 7 figure meet) as their arithmetic intensity. Both use the same per-token costs, so this shows the two are consistent; it is not an independent measurement.
+The split reads this way. The client factor is the load's own: at llm-d's peak the sessions and their idle time asked for 0.69 of the ceiling. Within that, llm-d lost nothing to reuse up to 240 sessions and 32 to 39% to the engine, the time requests spend waiting to be scheduled and, past 240, preempted; at 300 it also lost 31% to reuse. Dynamo and round-robin peak at lower loads, so their client factor is 0.29 to 0.39; past their peaks, added sessions turn into recompute (reuse 0.92 to 0.67) while the engine factor stays at 0.64 to 0.77. One idealisation of Section 2 shows in the table: the step-time law spreads prefill evenly across decode steps, so at a small batch recompute hides under the memory time and the reuse factor understates it, as for Dynamo at 60 sessions (hit rate 0.76, reuse 0.95); the engine factor carries it instead. At 120 sessions llm-d's 0.98 is the oracle's own hit rate over the window, so its reuse is 1.00. The rule of Section 5.1, applied to each run's measured hit rate, context and batch size, puts all nine runs on the same side of the measured ridge (about 290 FLOP/B, where the solid roofs of the Section 5 figure meet) as their arithmetic intensity. Both use the same per-token costs, so this shows the two are consistent; it is not an independent measurement.
 
 ### Run notes
 
 Every level ran on all six replicas, and per-replica throughput stayed within about 10% of the level's mean, except round-robin at 120 sessions, where two replicas held 17 running requests each against 6 to 10 on the others. Requests lost to disconnects: 0 to 6 per level. vLLM v0.28.0's host-tier occupancy gauge reports space pinned by in-flight transfers, not fullness, so the tier's fullness is not reported; it is write-through and, from its store counters, is rewritten in full every 9 to 25 minutes at these loads.
 
-## 6. Doing this for your own workload
+## 7. Doing this for your own workload
 
 Four steps, each one script or one job, give η and its split for any workload on any deployment.
 
@@ -223,53 +265,11 @@ The split then names the lever:
 | Sessions idle beyond their tool pause, few requests in flight | Client | The load generator, not the stack. Fix it before concluding anything. |
 | All three factors near one and η still low | The ceiling | The hardware is what it is. Compare deployments, not stacks. |
 
-Section 5 is this procedure applied once.
-
-## 7. Compute or memory: where a run sits on the roofline
-
-Section 7.1 draws the line between compute-bound and memory-bound from U, L, O and the batch size. The hit rate affects it only through U: ρ places the ceiling, and a run's measured h places that run.
-
-![Section 5 runs on the B200 fleet, cluster106, 20 October 2026 · FLOPs and bytes derived from sampled engine counters and the model shape (Appendix A); tokens restored from the host tier are not counted as recomputed · 9 runs, 3 stacks](figures/fig1-measured-roofline.png)
-
-*Section 5 runs on the B200 fleet, cluster106, 20 October 2026 · FLOPs and bytes derived from sampled engine counters and the model shape (Appendix A); tokens restored from the host tier are not counted as recomputed · 9 runs, 3 stacks*
-
-The figure places the nine fleet runs of Section 5 on the hardware's roofline by their measured arithmetic intensity and achieved compute. The dashed roofs are the B200 datasheet; the solid roofs are what this deployment was measured to reach. For compute, that is 22,794 prefill tokens per second at a 128k context, converted to FLOP/s. For memory, it is 4.2 TB/s per GPU, the rate at which decode steps actually read KV from HBM in the calibration runs, 53% of the datasheet's 8 TB/s. The compute roof is evaluated near the runs' mean context (110k to 124k tokens). Prompts range from about 34k at p10 to 251k at p99, and per-token prefill slows as context grows, so a roof weighted by the actual mix of contexts would sit a few percent lower.
-
-At a 0.98 hit rate the fleet sits on the bandwidth roof: each step streams the attention and projection weights, the experts its tokens select, and the KV of only about six decoding requests per replica, to produce one token each, so every byte read serves few FLOPs. As the hit rate falls, the same workload moves right and up, across the ridge, the arithmetic intensity at which the bandwidth roof meets the compute roof (about 290 FLOP/B on the measured roofs), onto the compute roof. The GPUs get busier and the useful token rate gets lower, because the compute is recomputing contexts that were evicted. The hit rate decides where on the roofline a serving system lands. A point left of the ridge (AI below 290) spent longer reading memory than computing in its steps; a point right of it spent longer computing.
-
-Which resource binds first follows from the rule of Section 7.1, which compares the uncached input per output token with the context. For the agentic trace of Section 5 the context is long, about 117k tokens, and with the hit rate near ρ a turn prefills only about 7k of it, so the fleet is memory-bound: reuse has removed the prefill, and the limit is how much KV the fleet can hold and how fast it can read it. A stack that loses reuse pushes the same trace across the rule's threshold into compute-bound, because recomputing the context becomes the work. The ceiling R of Section 2 is the throughput at which the first of the three resources saturates with h = ρ. Compute-bound and memory-bound in this post describe that ceiling, not a run; a run can sit far below the ceiling on either side. In an engine the three resources show up as settings, though not one to one:
-
-| Engine setting | What it bounds in one step | The wall it stands for | On the B200 fleet of Section 5 |
-| --- | --- | --- | --- |
-| KV blocks (HBM left after weights and activations) | Resident KV tokens: blocks × block size, here 3,403,712 tokens per replica | Capacity, exactly | The binding wall: 29 decoding contexts of 117k tokens fit, and paused sessions' KV competes for the same blocks; the engine reports it as requests waiting for capacity |
-| max\_num\_batched\_tokens (8,192) | Prefill tokens admitted per step, the chunk | None; it is how compute is spent per step | Never limits throughput, since total prefill FLOP/s is fixed; it sets how long a step with a chunk stalls every decode in it (220 to 310 ms, Appendix A) |
-| max\_num\_seqs (64) | Sequences in one step | A stand-in for bandwidth: caps the contexts a step must read, so caps step time | Never binds here: capacity admits 29; it would bind only below about 53k tokens of context |
-
-The compute wall has no setting. The prefill rate at a given context length is what the hardware and kernels deliver; the engine only chooses how much of it to spend per step. These three costs become the ceiling through one rule, called the step-time law in this post: a step takes the longer of its compute time and its memory time, and the throughput a replica sustains is the most it can push through while every step stays within compute, bandwidth and HBM capacity. The rule and the equations for where the walls fall are in Appendix B.
-
-### 7.1 Where the walls are
-
-The boundary between compute-bound and memory-bound has a closed form in terms of one hardware number, the ridge of the Section 7 figure expressed as a token count, the **ridge** r: the number of KV tokens the device can read from HBM in the time it takes to prefill one token,
-
-```latex
-r = \frac{\text{HBM bandwidth} / \text{KV bytes per token}}{\text{prefill tokens per second}}
-```
-
-r depends on the hardware and the model and on nothing else; no hit rate appears in it. For Qwen3-Coder-480B on 8 × B200, 0.53 × 64 TB/s of achieved bandwidth over 254 KB of KV per token is 133 million KV tokens per second, against a calibrated prefill rate of 37,217 tokens per second, so r is about 3,600; for Qwen3-32B on 2 × H100 it is 1,123. (The prefill rate falls with context length, so r grows with L; at a 128k context the B200 figure would be about 5,800, which lowers the agentic threshold below from 45 to 28 and changes no conclusion.) One more cost belongs on the memory side: every step streams the weights it touches, W\_b bytes, once, shared by the n sequences decoding in it (for a mixture of experts, the experts touched by every token in the step, the prefill tokens included, so W\_b is evaluated at n(1 + U/O) tokens), so per sequence it reads like W\_b/(n·b) extra tokens of context, where b is the KV bytes per token (254 KB here). With that folded into an effective context L\_eff = L + W\_b(n)/(n·b), compute takes longer than the memory read in a step, and is said to dominate it, when
-
-```latex
-\frac{U}{O} > \frac{L + W_b(n)/(n\,b)}{r} - 1
-```
-
-that is, when the uncached input per output token exceeds the effective context measured in ridges, less one. Which term dominates depends on the batch n; a workload is called compute-bound or memory-bound only at the ceiling, where n is fixed and the dominating term has reached its limit. Capacity is not in the rule: it caps how many sequences a replica can hold, n ≤ C/(L·b), and enters the ceiling as a separate condition (Appendix B). For the agentic workload of Section 5 (L = 117k, U = 7.5k, O = 386), U/O = 19 against a threshold of 50 at the ceiling's batch of 29, so it is memory-bound; the runs in its table where compute dominates are recompute, not work. The figure folds the batch size into colour: for every context length and U/O it shows the smallest decoding concurrency at which compute dominates, and grey where memory dominates at every batch the memory fits. The nine fleet runs are placed by their measured hit rates: llm-d's runs up to 240 sessions sit in the grey, and the Dynamo and round-robin runs and llm-d at 300 sessions sit in the n = 1 band, where recompute dominates at any batch.
-
-![the smallest decoding concurrency n at which U/O > (L + W_b(n)/(n·b))/r − 1 holds, for the B200 deployment of Appendix A (r = 3,600, W_b(n) from the expert-count formula of Appendix B, n capped by KV capacity and the engine's 64-sequence limit) · fleet runs from Section 5 placed by their measured hit rates (U = (1 − h)·I, h counting HBM and host-tier hits) · compute against bandwidth only; the capacity wall is a separate condition](figures/fig2-wall-map.png)
-
-*the smallest decoding concurrency n at which U/O > (L + W_b(n)/(n·b))/r − 1 holds, for the B200 deployment of Appendix A (r = 3,600, W_b(n) from the expert-count formula of Appendix B, n capped by KV capacity and the engine's 64-sequence limit) · fleet runs from Section 5 placed by their measured hit rates (U = (1 − h)·I, h counting HBM and host-tier hits) · compute against bandwidth only; the capacity wall is a separate condition*
+Section 6 is this procedure applied once.
 
 ## 8. What the ceiling leaves out
 
-The ceiling is a first-order bound on purpose: it keeps the terms that decide which resource binds and drops the rest. Each omission below pushes the ceiling in a known direction, and for the headline workload only one of them matters, the one Section 5 already names.
+The ceiling is a first-order bound on purpose: it keeps the terms that decide which resource binds and drops the rest. Each omission below pushes the ceiling in a known direction, and for the headline workload only one of them matters, the one Section 6 already names.
 
 | Left out of the ceiling | What it does to the ceiling | Size on the B200 headline workload |
 | --- | --- | --- |
@@ -277,7 +277,7 @@ The ceiling is a first-order bound on purpose: it keeps the terms that decide wh
 | Sequences sharing a prefix share its KV blocks and reads; the capacity and bandwidth terms charge each in full | Too low for shared-prefix workloads (the optimized-baseline guide scores 1.48, Appendix B) | None: agentic sessions share nothing |
 | Output-length variance, the (1 + CV²) factor on resident context | Too high when outputs are long and skewed | Negligible: 386 output tokens against a 117k context |
 | The small-batch step floor, launch and collective overhead (5.8 to 7.9 ms with nothing to read) | None at saturation | None; it sets the latency of the low-load runs, not the ceiling |
-| Steps assumed evenly mixed; an engine that fills each step with an 8k prefill chunk stalls its decodes for 220 to 310 ms | Not a ceiling term by design: it is an engine property | Caps the fleet at about 19k tokens per second per GPU, 0.69 of the ceiling; it appears in the engine factor of Section 5, not in R |
+| Steps assumed evenly mixed; an engine that fills each step with an 8k prefill chunk stalls its decodes for 220 to 310 ms | Not a ceiling term by design: it is an engine property | Caps the fleet at about 19k tokens per second per GPU, 0.69 of the ceiling; it appears in the engine factor of Section 6, not in R |
 | KV of paused sessions assumed held outside HBM at no cost | Too high for a fleet with HBM alone; right once a host tier holds them, as on this fleet | First-order for llm-d's knee: with paused sessions in the host tier, HBM fills with the sessions being decoded, from about 18 per replica against the ceiling's 29, because the engine also holds the chunked prefill of waiting requests and the KV it is copying in |
 
 None of these changes the order of the stacks or the hit-rate finding. They bound how far the 0.47 could move, and only the last matters at first order.
@@ -286,7 +286,7 @@ None of these changes the order of the stacks or the hit-rate finding. They boun
 
 Computing η for a stack today takes an effort like this one. Four things are missing before anyone could do it for their own deployment as standard practice.
 
-**A load generator that delivers the configured load.** The conversation replay used here needed a workaround to keep conversations out of lockstep (Section 5) and still left 4 to 13 s of idle time per turn beyond the tool pause. A generator that runs each session as its own closed loop, and records its idle time, would make the client factor exactly the load's own and leave only the system's factors.
+**A load generator that delivers the configured load.** The conversation replay used here needed a workaround to keep conversations out of lockstep (Section 6) and still left 4 to 13 s of idle time per turn beyond the tool pause. A generator that runs each session as its own closed loop, and records its idle time, would make the client factor exactly the load's own and leave only the system's factors.
 
 **A bandwidth calibration.** α\_W is measured for the H200 and B200 deployments from the marginal KV read between one and four long-context decodes (0.70 and 0.53). For the H100 reference deployment in Appendix B it is assumed at 0.70, which is why that validation's second row lands above one. A decode-only run at one long context, mirroring the existing peak prefill script, would make it a standard calibration for every deployment.
 
@@ -330,7 +330,7 @@ The roofline framework reduces serving evaluation to one ratio, η, and splits i
 
 F = α\_F F\_peak and W = α\_W W\_peak. The two efficiency factors are the only numbers not on a datasheet or a model card, and both are measurable with a short job: peak prefill throughput is already measured by the llm-d router's calibration script as chunk size over median time to first token for a cache-missing prompt.
 
-The B200 deployment the comparison in Section 5 ran on was calibrated on 11 October 2026: one replica of Qwen3-Coder-480B-A35B-FP8 at TP=8 with expert parallelism, same flags as the fleet (8k chunk, 64 sequences, 0.9 memory utilisation, 64-token blocks), on 8 × B200 with vLLM v0.28.0, the version Dynamo v1.5.0 pins and therefore the engine both stacks ran. An 8 × H200 replica with vLLM v0.27.1 was calibrated the same way the day before and is kept for reference; the B200 numbers on v0.27.1 were within 2% of these on every row.
+The B200 deployment the comparison in Section 6 ran on was calibrated on 11 October 2026: one replica of Qwen3-Coder-480B-A35B-FP8 at TP=8 with expert parallelism, same flags as the fleet (8k chunk, 64 sequences, 0.9 memory utilisation, 64-token blocks), on 8 × B200 with vLLM v0.28.0, the version Dynamo v1.5.0 pins and therefore the engine both stacks ran. An 8 × H200 replica with vLLM v0.27.1 was calibrated the same way the day before and is kept for reference; the B200 numbers on v0.27.1 were within 2% of these on every row.
 
 | Quantity | 8 × H200, vLLM v0.27.1 | 8 × B200, vLLM v0.28.0 | How |
 | --- | --- | --- | --- |
@@ -377,13 +377,13 @@ Per active request, with U uncached prompt tokens, resident context L and output
 c = \frac{1 + U/O}{R_{pf}}, \qquad m = \frac{L}{BW}, \qquad R_{pf} = \frac{F}{2N}, \quad BW = \frac{W}{b}
 ```
 
-These are the terms that grow with load. The weight stream W\_b/W is paid once per iteration whatever the load, so at low load every decode step is dominated by it and per-token cost looks memory-bound, the familiar small-batch result. Compute-bound and memory-bound are used here for the ceiling, where the per-sequence terms have grown to their limit, and that classification does not depend on load. Compute binds there when c exceeds m: when the KV tokens scanned per processed token, L/(1 + U/O), is below the hardware's ridge r = BW/R\_pf. The weight stream is kept by charging it per sequence: a step shared by n sequences reads W\_b(n) once, which is W\_b/(n·b) tokens of KV each, so the comparison is made with L\_eff = L + W\_b(n)/(n·b) in place of L, and Section 7.1 draws it for several n. The hit rate appears nowhere but inside U. Solving the equality for O gives the boundary output length as a function of context and uncached prefill,
+These are the terms that grow with load. The weight stream W\_b/W is paid once per iteration whatever the load, so at low load every decode step is dominated by it and per-token cost looks memory-bound, the familiar small-batch result. Compute-bound and memory-bound are used here for the ceiling, where the per-sequence terms have grown to their limit, and that classification does not depend on load. Compute binds there when c exceeds m: when the KV tokens scanned per processed token, L/(1 + U/O), is below the hardware's ridge r = BW/R\_pf. The weight stream is kept by charging it per sequence: a step shared by n sequences reads W\_b(n) once, which is W\_b/(n·b) tokens of KV each, so the comparison is made with L\_eff = L + W\_b(n)/(n·b) in place of L, and Section 5.1 draws it for several n. The hit rate appears nowhere but inside U. Solving the equality for O gives the boundary output length as a function of context and uncached prefill,
 
 ```latex
 O^{*}(L, U) = \frac{r\, U}{L - r} \quad (L > r), \qquad r = \frac{BW}{R_{pf}}
 ```
 
-Contexts shorter than the ridge r are compute-bound at any output length. Longer than r, memory binds once the output exceeds rU/(L − r). Rearranged, compute binds when U/O > L/r − 1: the uncached input per output token must exceed the context in ridges, less one. With nothing cached (U = L = I) this is 1/I + 1/O > 1/r, a harmonic mean of input and output below 2r, which for a long input reduces to O < r: 1,123 tokens on the reference deployment, so memory binds above about 1,100 output tokens. With everything cached (U = 0) the boundary is zero: a reused context longer than r is memory-bound whatever its output length, which is where the agentic workload of Section 5 sits (L = 117k, U = 7.5k, boundary 73 output tokens against 386 produced). The ridge is the hardware's bytes per FLOP times the model's FLOPs per token over its KV bytes per token, so gpt-oss-120b on an H200 lands at 1,167 and latent-attention models land higher.
+Contexts shorter than the ridge r are compute-bound at any output length. Longer than r, memory binds once the output exceeds rU/(L − r). Rearranged, compute binds when U/O > L/r − 1: the uncached input per output token must exceed the context in ridges, less one. With nothing cached (U = L = I) this is 1/I + 1/O > 1/r, a harmonic mean of input and output below 2r, which for a long input reduces to O < r: 1,123 tokens on the reference deployment, so memory binds above about 1,100 output tokens. With everything cached (U = 0) the boundary is zero: a reused context longer than r is memory-bound whatever its output length, which is where the agentic workload of Section 6 sits (L = 117k, U = 7.5k, boundary 73 output tokens against 386 produced). The ridge is the hardware's bytes per FLOP times the model's FLOPs per token over its KV bytes per token, so gpt-oss-120b on an H200 lands at 1,167 and latent-attention models land higher.
 
 ![O*(L, U) = rU/(L − r) for the reference deployment, r = 1,123 · 7 context lengths × 4 uncached-prefill levels](figures/fig5-output-wall.png)
 
