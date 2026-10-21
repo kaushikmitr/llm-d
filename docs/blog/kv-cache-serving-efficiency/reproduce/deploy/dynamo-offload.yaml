@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: dynamo-decode, namespace: kv-fleet, labels: {app: dynamo-decode}}
+spec:
+  replicas: 6
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: dynamo-decode}}
+  template:
+    metadata: {labels: {app: dynamo-decode}}
+    spec:
+      nodeSelector: {cloud.google.com/gke-nodepool: b200-p2p-pool-1}
+      tolerations:
+      - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+      - {key: cloud.google.com/gke-spot, operator: Exists, effect: NoSchedule}
+      resourceClaims:
+      - {name: gpus, resourceClaimTemplateName: gpu-x8}
+      containers:
+      - name: main
+        image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.5.0
+        securityContext: {runAsUser: 0, runAsGroup: 0}
+        command: ["/bin/bash", "-c", "export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:$LD_LIBRARY_PATH PATH=$PATH:/usr/local/nvidia/bin; find /dev/shm -type f -delete; python3 /patch/vllm_pin_backport.py || exit 1; exec python3 -m dynamo.vllm \"$@\"", "--"]
+        args: ["--model", "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8", "--tensor-parallel-size", "8", "--enable-expert-parallel", "--max-model-len", "262144", "--max-num-batched-tokens", "8192", "--max-num-seqs", "64", "--gpu-memory-utilization", "0.9", "--block-size", "64", "--kv-events-config", "{\"publisher\":\"zmq\",\"topic\":\"kv-events\",\"endpoint\":\"tcp://*:20080\",\"enable_kv_cache_events\":true}", "--kv-transfer-config", "{\"kv_connector\":\"OffloadingConnector\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"cpu_bytes_to_use\":1610612736000,\"self_describing_kv_events\":true}}"]
+        env:
+        - {name: PYTHONHASHSEED, value: "0"}
+        - {name: ETCD_ENDPOINTS, value: "http://dynamo-etcd.kv-fleet.svc:2379"}
+        - {name: NATS_SERVER, value: "nats://dynamo-nats.kv-fleet.svc:4222"}
+        - {name: DYN_NAMESPACE, value: "dynamo"}
+        - {name: DYN_SYSTEM_PORT, value: "8081"}
+        - {name: DYN_HEALTH_CHECK_ENABLED, value: "false"}
+        - {name: HF_TOKEN, valueFrom: {secretKeyRef: {name: llm-d-hf-token, key: HF_TOKEN}}}
+        - {name: HF_HOME, value: /root/.cache/huggingface}
+        - {name: HF_HUB_DISABLE_XET, value: "1"}
+        ports: [{containerPort: 8081, name: system}, {containerPort: 20080, name: kv-events}]
+        resources:
+          claims: [{name: gpus}]
+          limits: {cpu: "96", memory: 3300Gi}
+          requests: {cpu: "64", memory: 2900Gi}
+        readinessProbe: {httpGet: {path: /health, port: 8081}, initialDelaySeconds: 60, periodSeconds: 15, failureThreshold: 600}
+        volumeMounts:
+        - {name: shm, mountPath: /dev/shm}
+        - {name: pin-backport, mountPath: /patch}
+        - {name: hf-cache, mountPath: /root/.cache/huggingface}
+      volumes:
+      - {name: shm, emptyDir: {medium: Memory, sizeLimit: 1600Gi}}
+      - {name: pin-backport, configMap: {name: vllm-pin-backport}}
+      - {name: hf-cache, hostPath: {path: /var/cache/huggingface, type: DirectoryOrCreate}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: dynamo-frontend, namespace: kv-fleet, labels: {app: dynamo-frontend}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: dynamo-frontend}}
+  template:
+    metadata: {labels: {app: dynamo-frontend}}
+    spec:
+      nodeSelector: {cloud.google.com/gke-nodepool: cpu-pool-3}
+      containers:
+      - name: main
+        image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.5.0
+        command: ["python3", "-m", "dynamo.frontend"]
+        args: ["--router-mode", "kv", "--http-port", "8000", "--kv-cache-block-size", "64"]
+        env:
+        - {name: ETCD_ENDPOINTS, value: "http://dynamo-etcd.kv-fleet.svc:2379"}
+        - {name: NATS_SERVER, value: "nats://dynamo-nats.kv-fleet.svc:4222"}
+        - {name: DYN_NAMESPACE, value: "dynamo"}
+        - {name: HF_TOKEN, valueFrom: {secretKeyRef: {name: llm-d-hf-token, key: HF_TOKEN}}}
+        ports: [{containerPort: 8000, name: http}]
+        resources: {requests: {cpu: "8", memory: 16Gi}, limits: {cpu: "16", memory: 32Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: dynamo-frontend, namespace: kv-fleet}
+spec:
+  selector: {app: dynamo-frontend}
+  ports: [{name: http, port: 8000, targetPort: 8000}]

@@ -1,0 +1,10 @@
+B200 TP=8 (cluster106, 2026-10-11, vLLM v0.27.1, Qwen3-Coder-480B-A35B-FP8, EP on)
+prefill 36440 / 33429 / 22755 tok/s at 8k/32k/128k -> alpha_F 0.142 of 18 PF bf16, falloff -0.170
+C 3,403,712 tokens (805 GiB bf16 KV)
+decode TPOT ms: 1k/c1 5.67, 1k/c8 8.64, 131k/c1 7.53, 131k/c4 10.49, 131k/c8 268 (interference; 8k chunk step ~225 ms)
+alpha_W 0.53 of 64 TB/s (marginal KV read c1->c4)
+agentic ceiling (I=121425,O=1101,rho=0.938): 10.6k tok/s/GPU, 85k/replica, capacity-bound ~28 resident, t_iter 36.6 ms
+4-replica fleet ceiling 339k tok/s, saturating sessions ~175; 8 replicas ~350
+--- rerun on vllm/vllm-openai:v0.28.0 (Dynamo v1.5.0 pin), 2026-10-11 19:13-19:40 UTC
+prefill 37217 / 33631 / 22794 tok/s at 8k/32k/128k; C 3,403,712 tokens (unchanged)
+decode TPOT ms: 1k/c1 5.79, 1k/c8 8.58, 131k/c1 7.57, 131k/c4 10.44, 131k/c8 259

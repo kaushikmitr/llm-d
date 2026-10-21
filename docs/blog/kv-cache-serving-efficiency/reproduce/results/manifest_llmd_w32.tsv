@@ -1,0 +1,5 @@
+conversations	num_requests	seed	status	exit	result_dir	t0	t1	ttft_med_s	engine_hit	steady_tps	collapsed
+120	2400	3127	DONE	0	results/b200_fleet_offload/llmd_w32/conc_120	1792461494	1792462463	1.16	0.975	603528	0
+180	3600	3187	DONE	0	results/b200_fleet_offload/llmd_w32/conc_180	1792462521	1792463799	1.53	0.704	622079	0
+240	4800	3247	DONE	0	results/b200_fleet_offload/llmd_w32/conc_240	1792463868	1792465521	2.12	0.240	570056	0
+300	6000	3307	DONE	0	results/b200_fleet_offload/llmd_w32/conc_300	1792465603	1792468587	36.26	0.023	345008	0
