@@ -42,7 +42,7 @@ One replica, same flags as the fleet.
 
 ## 3. Compute the ceiling
 
-`analysis/ceiling_v2.py` prints R per GPU and per fleet, the batch at which capacity binds, the compute share there, the paused-session KV the host tier must hold, the ideal throughput-against-batch curve, the two capacity walls, the Section 5.1 thresholds and the rule check. Hardware constants are in `analysis/ceilings.py` (`HW` table) and at the top of `ceiling_v2.py`; the workload's I, O and ρ are set there too. The expert-weight term counts every token in a step, decode and prefill alike.
+`analysis/ceiling_v2.py` prints R per GPU and per fleet, the batch at which capacity binds, the compute share there, the paused-session KV the host tier must hold, the ideal throughput-against-batch curve, the two capacity walls, the Section 2.1 thresholds and the rule check. Hardware constants are in `analysis/ceilings.py` (`HW` table) and at the top of `ceiling_v2.py`; the workload's I, O and ρ are set there too. The expert-weight term counts every token in a step, decode and prefill alike.
 
 ## 4. Sweep the load and split the shortfall
 
