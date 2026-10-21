@@ -36,8 +36,6 @@ The industry has built specialised solutions at three layers of the stack:
 
 Seen from the KV cache, these are facets of one placement problem, and the question for any of them, alone or combined, is the same: how close does the fleet get to the throughput its hardware allows for this workload?
 
-That ceiling can be computed. Section 2 shows where a run sits on the roofline, compute against memory, and where the walls are. Section 3 derives the ceiling, works it out for one B200 fleet and defines serving efficiency against it. Section 4 splits the shortfall into three factors. Section 5 is one page on where KV can be and what each move costs. Section 6 measures three stacks on the fleet. Section 7 turns the method into a procedure for any workload. Section 8 lists what the ceiling leaves out, Section 9 the open work, and Section 10 concludes. Appendix A holds the inputs and their calibration, Appendix B the derivation.
-
 ## 2. Compute or memory: where a run sits on the roofline
 
 Section 2.1 draws the line between compute-bound and memory-bound from U, L, O and the batch size. The hit rate affects it only through U: ρ places the ceiling, and a run's measured h places that run.
@@ -46,19 +44,13 @@ Section 2.1 draws the line between compute-bound and memory-bound from U, L, O a
 
 *Section 6 runs on the B200 fleet, cluster106, 20 October 2026 · FLOPs and bytes derived from sampled engine counters and the model shape (Appendix A); tokens restored from the host tier are not counted as recomputed · 9 runs, 3 stacks*
 
-The figure places the nine fleet runs of Section 6 on the hardware's roofline by their measured arithmetic intensity and achieved compute. The dashed roofs are the B200 datasheet; the solid roofs are what this deployment was measured to reach. For compute, that is 22,794 prefill tokens per second at a 128k context, converted to FLOP/s. For memory, it is 4.2 TB/s per GPU, the rate at which decode steps actually read KV from HBM in the calibration runs, 53% of the datasheet's 8 TB/s. The compute roof is evaluated near the runs' mean context (110k to 124k tokens). Prompts range from about 34k at p10 to 251k at p99, and per-token prefill slows as context grows, so a roof weighted by the actual mix of contexts would sit a few percent lower.
+The figure places the nine fleet runs of Section 6 on the hardware's roofline by their measured arithmetic intensity and achieved compute. The dashed roofs are the B200 datasheet; the solid roofs are what this deployment was measured to reach (Appendix A): 53% of the datasheet bandwidth, and the prefill rate at a 128k context.
 
 At a 0.98 hit rate the fleet sits on the bandwidth roof: each step streams the attention and projection weights, the experts its tokens select, and the KV of only about six decoding requests per replica, to produce one token each, so every byte read serves few FLOPs. As the hit rate falls, the same workload moves right and up, across the ridge, the arithmetic intensity at which the bandwidth roof meets the compute roof (about 290 FLOP/B on the measured roofs), onto the compute roof. The GPUs get busier and the useful token rate gets lower, because the compute is recomputing contexts that were evicted. The hit rate decides where on the roofline a serving system lands. A point left of the ridge (AI below 290) spent longer reading memory than computing in its steps; a point right of it spent longer computing.
 
-Which resource binds first follows from the rule of Section 2.1, which compares the uncached input per output token with the context. For the agentic trace of Section 6 the context is long, about 117k tokens, and with the hit rate near ρ a turn prefills only about 7k of it, so the fleet is memory-bound: reuse has removed the prefill, and the limit is how much KV the fleet can hold and how fast it can read it. A stack that loses reuse pushes the same trace across the rule's threshold into compute-bound, because recomputing the context becomes the work. The ceiling R of Section 3 is the throughput at which the first of the three resources saturates with h = ρ. Compute-bound and memory-bound in this post describe that ceiling, not a run; a run can sit far below the ceiling on either side. In an engine the three resources show up as settings, though not one to one:
+Which resource binds first follows from the rule of Section 2.1, which compares the uncached input per output token with the context. For the agentic trace of Section 6 the context is long, about 117k tokens, and with the hit rate near ρ a turn prefills only about 7k of it, so the fleet is memory-bound: reuse has removed the prefill, and the limit is how much KV the fleet can hold and how fast it can read it. A stack that loses reuse pushes the same trace across the rule's threshold into compute-bound, because recomputing the context becomes the work. The ceiling R of Section 3 is the throughput at which the first of the three resources saturates with h = ρ. Compute-bound and memory-bound in this post describe that ceiling, not a run; a run can sit far below the ceiling on either side.
 
-| Engine setting | What it bounds in one step | The wall it stands for | On the B200 fleet of Section 6 |
-| --- | --- | --- | --- |
-| KV blocks (HBM left after weights and activations) | Resident KV tokens: blocks × block size, here 3,403,712 tokens per replica | Capacity, exactly | The binding wall: 29 decoding contexts of 117k tokens fit, and paused sessions' KV competes for the same blocks; the engine reports it as requests waiting for capacity |
-| max\_num\_batched\_tokens (8,192) | Prefill tokens admitted per step, the chunk | None; it is how compute is spent per step | Never limits throughput, since total prefill FLOP/s is fixed; it sets how long a step with a chunk stalls every decode in it (220 to 310 ms, Appendix A) |
-| max\_num\_seqs (64) | Sequences in one step | A stand-in for bandwidth: caps the contexts a step must read, so caps step time | Never binds here: capacity admits 29; it would bind only below about 53k tokens of context |
-
-The compute wall has no setting. The prefill rate at a given context length is what the hardware and kernels deliver; the engine only chooses how much of it to spend per step. These three costs become the ceiling through one rule, called the step-time law in this post: a step takes the longer of its compute time and its memory time, and the throughput a replica sustains is the most it can push through while every step stays within compute, bandwidth and HBM capacity. The rule and the equations for where the walls fall are in Appendix B.
+The three costs become the ceiling through one rule, called the step-time law in this post: a step takes the longer of its compute time and its memory time, and the throughput a replica sustains is the most it can push through while every step stays within compute, bandwidth and HBM capacity. The equations are in Appendix B.
 
 ### 2.1 Where the walls are
 
@@ -68,7 +60,7 @@ The boundary between compute-bound and memory-bound has a closed form in terms o
 r = \frac{\text{HBM bandwidth} / \text{KV bytes per token}}{\text{prefill tokens per second}}
 ```
 
-r depends on the hardware and the model and on nothing else; no hit rate appears in it. For Qwen3-Coder-480B on 8 × B200, 0.53 × 64 TB/s of achieved bandwidth over 254 KB of KV per token is 133 million KV tokens per second, against a calibrated prefill rate of 37,217 tokens per second, so r is about 3,600; for Qwen3-32B on 2 × H100 it is 1,123. (The prefill rate falls with context length, so r grows with L; at a 128k context the B200 figure would be about 5,800, which lowers the agentic threshold below from 45 to 28 and changes no conclusion.) One more cost belongs on the memory side: every step streams the weights it touches, W\_b bytes, once, shared by the n sequences decoding in it (for a mixture of experts, the experts touched by every token in the step, the prefill tokens included, so W\_b is evaluated at n(1 + U/O) tokens), so per sequence it reads like W\_b/(n·b) extra tokens of context, where b is the KV bytes per token (254 KB here). With that folded into an effective context L\_eff = L + W\_b(n)/(n·b), compute takes longer than the memory read in a step, and is said to dominate it, when
+r depends on the hardware and the model and on nothing else; no hit rate appears in it. For Qwen3-Coder-480B on 8 × B200, 0.53 × 64 TB/s of achieved bandwidth over 254 KB of KV per token is 133 million KV tokens per second, against a calibrated prefill rate of 37,217 tokens per second, so r is about 3,600. (The prefill rate falls with context length, so r grows with L; at a 128k context the figure would be about 5,800, which lowers the agentic threshold below from 45 to 28 and changes no conclusion.) One more cost belongs on the memory side: every step streams the weights it touches, W\_b bytes, once, shared by the n sequences decoding in it (for a mixture of experts, the experts touched by every token in the step, the prefill tokens included, so W\_b is evaluated at n(1 + U/O) tokens), so per sequence it reads like W\_b/(n·b) extra tokens of context, where b is the KV bytes per token (254 KB here). With that folded into an effective context L\_eff = L + W\_b(n)/(n·b), compute takes longer than the memory read in a step, and is said to dominate it, when
 
 ```latex
 \frac{U}{O} > \frac{L + W_b(n)/(n\,b)}{r} - 1
@@ -90,13 +82,6 @@ An inference engine serves requests in steps. One step is one forward pass over 
 
 The KV cache enters all three. A cached prompt token costs no compute (a **prefix-cache hit**); a resident context costs bandwidth every step; a retained context costs capacity whether or not it is decoding.
 
-### Key metrics
-
-- **h, hit rate.** The token-weighted fraction of prompt tokens served from cached KV rather than recomputed; the quantity the engine itself counts.
-- **ρ, intrinsic overlap.** The hit rate an oracle with unlimited retention would reach. A real stack can only fall short of it: the shortfall, ρ minus h, is the prefix reuse the stack lost, through turns routed to a replica that did not hold their context and through KV evicted from every tier that held it before it was needed again.
-- **U, uncached input.** (1 − h) × I: the prompt tokens that must be computed.
-- **L, resident context.** The whole prompt plus the output so far, cached or not. Every decode step reads all of it from HBM, and it occupies capacity for as long as it is held.
-
 Serving efficiency η is one number per workload and hardware: the tokens per second per accelerator a system achieved, divided by the ceiling R. R is the tokens per second the same accelerators could sustain if every reusable prefix token were reused (h = ρ) and KV occupied HBM only while its request was decoding. Tokens are input plus output, so a cached prompt token counts as served just as a recomputed one does; what differs is what it cost.
 
 ```latex
@@ -106,8 +91,10 @@ Serving efficiency η is one number per workload and hardware: the tokens per se
 | Symbol | Meaning | How it is obtained |
 | --- | --- | --- |
 | I, O | Mean prompt and output length of the workload, in tokens, token-weighted over requests | From the trace or the request bodies; the harness's output count is not trusted (Section 6) |
-| ρ | Intrinsic overlap: the prefix hit rate an oracle with unlimited retention would reach on this trace | Computed from the trace once, at fleet capacity |
+| ρ | Intrinsic overlap: the prefix hit rate an oracle with unlimited retention would reach on this trace. ρ − h is the reuse a stack lost, to routing and to eviction from every tier | Computed from the trace once, at fleet capacity |
 | h | Prefix-cache hit rate the system achieved, token-weighted | The engine's own counters: cached prompt tokens over prompt tokens |
+| U | Uncached input: (1 − h) × I, the prompt tokens that must be computed | From h and I |
+| L | Resident context: the whole prompt plus the output so far. Every decode step reads all of it from HBM, and it occupies capacity for as long as it is held | I + O/2, the average over a request's life |
 | R | The ceiling: tokens per second per accelerator at the first saturated resource, with h = ρ. R alone means R(ρ); R(h) is the same formula at a run's achieved hit rate | Appendix B, from the calibrated inputs of Appendix A |
 | η | Serving efficiency: achieved tokens per second per accelerator over R | Peak steady-state throughput over a sweep of offered load, divided by R |
 
@@ -171,7 +158,7 @@ Three stacks were evaluated on one six-replica NVIDIA B200 fleet running the age
 
 Each stack ran an ascending ladder of session counts until its throughput had fallen: llm-d at 120, 180, 240 and 300 sessions; Dynamo at 60, 90 and 120; round-robin at 90 and 120. Throughput is steady-state, and η is taken at each stack's peak over its ladder (Section 3). The engines' counters were sampled every 15 s (uncached prefill tokens, tokens restored from the host tier, generated tokens, steps, resident and waiting requests, KV occupancy, preemptions); achieved FLOP/s, HBM traffic and arithmetic intensity follow from them and the model shape. Every level ran on all six replicas, checked from each replica's own counters.
 
-The trace, as inference-perf's conversation replay generates it: a 3,000-token system prompt shared by all conversations; a per-conversation prefix drawn from a lognormal with mean 160k tokens, clipped to 10k to 200k, so a conversation's first turn carries about 89k new tokens on average; 20 turns per conversation, each appending lognormal 1,500 new input tokens (100 to 10,000) and the previous output, itself lognormal with mean 425 tokens (50 to 10,000); and a tool pause between turns drawn from a lognormal with mean 15 s and standard deviation 55 s, clipped to 1 to 100 s. Mean prompt length varies with the level's seed, which is why the decomposition below scores each run at its own. What each level delivered, from the per-request records and the engine counters over the steady window:
+The trace comes from inference-perf's conversation replay: a 3,000-token system prompt shared by all conversations; a per-conversation prefix of about 160k tokens on average (lognormal, clipped to 10k to 200k); 20 turns per conversation, each adding about 1,500 new input tokens and the previous output, itself about 425 tokens on average; and a tool pause between turns of 15 s on average (lognormal, 1 to 100 s). Mean prompt length varies with the level's seed, which is why the decomposition scores each run at its own. What each level delivered over the steady window, from the per-request records and the engine counters:
 
 | Stack | Sessions configured | Sessions live, mean | Mean prompt I, tokens | Mean output O, tokens | Tool pause, mean | Other idle per turn | Engine time per turn | Requests in the engine per replica, running + waiting |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -219,9 +206,7 @@ The second figure shows the resource that sets llm-d's peak. Its throughput rise
 
 ### The load the harness delivered
 
-inference-perf's conversation replay (v0.7.0, commit e28d9a0; the same code path is on main at the time of writing) delivers less load than configured when used as documented: it dispatches turns in strict round-robin order across conversations, and a worker waits for a conversation's previous turn and tool sleep to finish only after it has taken a concurrency slot, so conversations advance in lockstep. The runs here work around it. concurrency\_level is set to four times num\_conversations, so each conversation's next turn is already parked in a slot when its previous turn releases; every conversation runs 20 turns, so none wraps back to its first turn; and the harness runs 32 worker processes, because 8 saturated their CPUs above about 150 live sessions. The session lock still allows one request on the wire per conversation, so the engines never see more than num\_conversations requests.
-
-With these settings the harness kept 86 to 92% of the configured sessions in flight at every level, and a session's idle time beyond its tool sleep was 4 to 7 s per turn at the peaks and 13 s at the collapsed levels, where slow turns hold back their conversations. The decomposition below carries the load the client offered as its own factor, computed from the records, so the ranking does not depend on it. The upstream fix, one closed loop per conversation, would make the workaround unnecessary.
+inference-perf's conversation replay (v0.7.0) advances conversations in lockstep when used as documented, so the runs set the concurrency to four times the number of conversations, run 20 turns per conversation and use 32 worker processes; the engines still never see more than one request per conversation. With that, the harness kept 86 to 92% of the configured sessions in flight, with 4 to 7 s of idle time per turn beyond the tool pause at the peaks and 13 s at the collapsed levels; the decomposition carries this as the client factor, so the ranking does not depend on it.
 
 ### Where the loss is
 
@@ -243,7 +228,7 @@ The split reads this way. The client factor is the load's own: at llm-d's peak t
 
 ### Run notes
 
-Every level ran on all six replicas, and per-replica throughput stayed within about 10% of the level's mean, except round-robin at 120 sessions, where two replicas held 17 running requests each against 6 to 10 on the others. Requests lost to disconnects: 0 to 6 per level. vLLM v0.28.0's host-tier occupancy gauge reports space pinned by in-flight transfers, not fullness, so the tier's fullness is not reported; it is write-through and, from its store counters, is rewritten in full every 9 to 25 minutes at these loads.
+Per-replica throughput stayed within about 10% of each level's mean, except round-robin at 120 sessions, where two replicas held 17 running requests each against 6 to 10 on the others, and 0 to 6 requests per level were lost to disconnects.
 
 ## 7. Doing this for your own workload
 
@@ -265,7 +250,7 @@ The split then names the lever:
 | Sessions idle beyond their tool pause, few requests in flight | Client | The load generator, not the stack. Fix it before concluding anything. |
 | All three factors near one and η still low | The ceiling | The hardware is what it is. Compare deployments, not stacks. |
 
-Section 6 is this procedure applied once.
+Section 6 is this procedure applied once. The scripts, configs and results that did it are in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce).
 
 ## 8. What the ceiling leaves out
 
@@ -274,7 +259,7 @@ The ceiling is a first-order bound on purpose: it keeps the terms that decide wh
 | Left out of the ceiling | What it does to the ceiling | Size on the B200 headline workload |
 | --- | --- | --- |
 | Attention FLOPs grow with context; the compute term is linear in tokens | Too high for compute-bound long-context recompute (about 35% at 48k tokens) | None at the ceiling: it is capacity-bound at ρ, and the calibrated prefill rate at 128k already carries the attention cost |
-| Sequences sharing a prefix share its KV blocks and reads; the capacity and bandwidth terms charge each in full | Too low for shared-prefix workloads (the optimized-baseline guide scores 1.48, Appendix B) | None: agentic sessions share nothing |
+| Sequences sharing a prefix share its KV blocks and reads; the capacity and bandwidth terms charge each in full | Too low for shared-prefix workloads: the llm-d optimized-baseline guide's shared-prefix run scores 1.48 against it | None: agentic sessions share nothing |
 | Output-length variance, the (1 + CV²) factor on resident context | Too high when outputs are long and skewed | Negligible: 386 output tokens against a 117k context |
 | The small-batch step floor, launch and collective overhead (5.8 to 7.9 ms with nothing to read) | None at saturation | None; it sets the latency of the low-load runs, not the ceiling |
 | Steps assumed evenly mixed; an engine that fills each step with an 8k prefill chunk stalls its decodes for 220 to 310 ms | Not a ceiling term by design: it is an engine property | Caps the fleet at about 19k tokens per second per GPU, 0.69 of the ceiling; it appears in the engine factor of Section 6, not in R |
@@ -284,17 +269,12 @@ None of these changes the order of the stacks or the hit-rate finding. They boun
 
 ## 9. Open work
 
-Computing η for a stack today takes an effort like this one. Four things are missing before anyone could do it for their own deployment as standard practice.
+Computing η for a stack took an effort like this one. The scripts, configs and calibration jobs that did it, the decode bandwidth calibration included, are in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce), so the next one is cheaper. Four things are still missing.
 
-**A load generator that delivers the configured load.** The conversation replay used here needed a workaround to keep conversations out of lockstep (Section 6) and still left 4 to 13 s of idle time per turn beyond the tool pause. A generator that runs each session as its own closed loop, and records its idle time, would make the client factor exactly the load's own and leave only the system's factors.
-
-**A bandwidth calibration.** α\_W is measured for the H200 and B200 deployments from the marginal KV read between one and four long-context decodes (0.70 and 0.53). For the H100 reference deployment in Appendix B it is assumed at 0.70, which is why that validation's second row lands above one. A decode-only run at one long context, mirroring the existing peak prefill script, would make it a standard calibration for every deployment.
-
-**A cost model at routing time.** Every stack today encodes the price of moving KV as hand-calibrated thresholds: a peak prefill throughput here, a minimum cached-token delta there. The companion derivation's spill rule and split threshold could replace them with a per-request comparison in one unit. Neither has been validated. The P2P ladder supplies the constants for the second, and a three-arm run on one fleet (affinity only; affinity plus a host tier the router cannot see; the same with a tier-aware index) would test the first.
-
-**A cross-engine KV format.** KV written by one engine cannot in general be read by another, or by the same engine at a different tensor-parallel degree, block size or quantisation, so the peer-to-peer path has to require all three to match. An on-the-wire block format with layout, dtype, sharding and attention-variant metadata is a tractable standards problem and the prerequisite for any fleet-wide tier.
-
-**A benchmark suite that states its prefix structure and its ρ.** Nothing above can be compared without workloads whose session count, turn count, prefix-length distribution and inter-turn gap are specified, with the oracle overlap computed and published alongside, and whose load generator is open-loop or closed-loop by declaration.
+- **A load generator that delivers the configured load.** The conversation replay used here needed a workaround to keep conversations out of lockstep (Section 6) and still left 4 to 13 s of idle time per turn beyond the tool pause; one closed loop per conversation, with its idle time recorded, would make the client factor the load's own.
+- **A cost model at routing time.** Stacks encode the price of moving KV as hand-calibrated thresholds, a peak prefill throughput here and a minimum cached-token delta there; a per-request comparison in one unit, such as the companion derivation's spill rule, has not been validated.
+- **A cross-engine KV format.** KV written by one engine cannot in general be read by another, or at another tensor-parallel degree, block size or quantisation, so a wire format carrying that metadata is the prerequisite for any fleet-wide tier.
+- **A benchmark suite that states its prefix structure and its ρ.** Workloads need their session and turn counts, prefix-length distribution and inter-turn gap specified, with the oracle overlap published alongside; the kit's oracle script computes it for any trace.
 
 ## 10. Conclusion
 
@@ -302,33 +282,31 @@ The roofline framework reduces serving evaluation to one ratio, η, and splits i
 
 ## References
 
-- [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides): tiered-prefix-cache, p2p-kv-cache-sharing, optimized-baseline, pd-disaggregation; [peak prefill throughput calibration](https://github.com/llm-d/llm-d/tree/main/guides/recipes/router/calibration)
+- [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides): agentic-serving, tiered-prefix-cache, p2p-kv-cache-sharing, optimized-baseline, pd-disaggregation; [peak prefill throughput calibration](https://github.com/llm-d/llm-d/tree/main/guides/recipes/router/calibration)
 - [llm-d-router](https://github.com/llm-d/llm-d-router): prefix-cache-affinity-filter, token-load-scorer, precise-prefix-cache-producer, p2p-source-producer
+- [Reproduction kit for this post](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce): deployment manifests, calibration jobs, harness, analysis scripts and results
+- [inference-perf](https://github.com/kubernetes-sigs/inference-perf), the load generator
 - Van Drie, L., *LLM Admission and Routing: A Step-by-Step Derivation from the Spacetime Trapezoid*, derivation companion, 2026
-- Qin et al., [Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving](https://arxiv.org/abs/2407.00079), FAST 2025
-- Zhong et al., [DistServe](https://arxiv.org/abs/2401.09670), OSDI 2024; Patel et al., [Splitwise](https://arxiv.org/abs/2311.18677), ISCA 2024
-- Zheng et al., [SGLang](https://arxiv.org/abs/2312.07104); Liu et al., [LMCache](https://arxiv.org/abs/2510.09665)
-- Lai et al., [TokenScale](https://arxiv.org/abs/2512.03416), the basis of llm-d's token-aware autoscaling
-- [NVIDIA Dynamo KV cache aware routing](https://docs.nvidia.com/dynamo/user-guides/kv-cache-aware-routing); [AIBrix](https://arxiv.org/abs/2504.03648)
+- [NVIDIA Dynamo KV cache aware routing](https://docs.nvidia.com/dynamo/user-guides/kv-cache-aware-routing)
 
 ## Appendix A. Inputs and calibration
 
-| Symbol | Meaning | Reference value: Qwen3-32B on 2 × H100, TP=2 | Source |
-| --- | --- | --- | --- |
-| F\_peak | dense accelerator FLOP/s per replica | 1.98 PFLOP/s | datasheet, 2 × 989 TFLOP/s bf16 |
-| α\_F | prefill efficiency, achieved over peak | 0.53 | calibrated: peak prefill throughput 15,928 tok/s (llm-d calibration matrix) × 2N / F\_peak |
-| W\_peak | HBM bandwidth per replica | 6.7 TB/s | datasheet, 2 × 3.35 TB/s |
-| α\_W | decode read efficiency | 0.70 | assumed; Section 9 proposes the calibration run |
-| C | HBM bytes available for KV | 73 GiB, 298,000 tokens | engine startup log |
-| B, T\_0 | effective inter-node link for KV, and setup latency | 17.3 GB/s, 26 ms | fitted to the llm-d P2P ladder (gpt-oss-120b on H200, RDMA) |
-| N | active parameters | 32.8 B | model card |
-| b | KV bytes per token, 2 · layers · KV heads · head dim · bytes | 256 KiB | 64 layers, 8 KV heads, d=128, bf16 |
-| W\_b | weight bytes | 65.6 GB | bf16 |
-| I, O | token-weighted mean input and output length | workload | plus the output length's coefficient of variation |
-| ρ | intrinsic overlap | workload | hit ratio of an oracle cache with the fleet's total capacity across tiers, replayed on the trace |
-| c | offered concurrency per replica | workload | closed-loop runs only |
+| Symbol | Meaning | How it is obtained |
+| --- | --- | --- |
+| F\_peak | dense accelerator FLOP/s per replica | datasheet |
+| α\_F | prefill efficiency, achieved over peak | calibration job: peak prefill throughput × 2N / F\_peak |
+| W\_peak | HBM bandwidth per replica | datasheet |
+| α\_W | decode read efficiency | calibration job: marginal KV-read bandwidth between one and four long-context decodes, over W\_peak |
+| C | HBM bytes available for KV | engine startup log |
+| B, T\_0 | effective inter-node link for KV, and setup latency | fitted to the llm-d P2P ladder (gpt-oss-120b on H200, RDMA): 17.3 GB/s, 26 ms |
+| N | active parameters | model card |
+| b | KV bytes per token, 2 · layers · KV heads · head dim · bytes | model shape, or host-tier bytes loaded over host-tier hits |
+| W\_b | weight bytes a step reads | model card; for a mixture of experts, the experts the step's tokens touch (Appendix B) |
+| I, O | token-weighted mean input and output length | the trace, with the output length's coefficient of variation |
+| ρ | intrinsic overlap | an oracle cache with unlimited retention replayed on the trace |
+| c | offered concurrency per replica | the load generator, closed-loop runs only |
 
-F = α\_F F\_peak and W = α\_W W\_peak. The two efficiency factors are the only numbers not on a datasheet or a model card, and both are measurable with a short job: peak prefill throughput is already measured by the llm-d router's calibration script as chunk size over median time to first token for a cache-missing prompt.
+F = α\_F F\_peak and W = α\_W W\_peak. The two efficiency factors are the only numbers not on a datasheet or a model card, and each is one short job on one replica: the llm-d router's calibration script measures peak prefill throughput as chunk size over median time to first token for a cache-missing prompt, and a decode-only job at one long context measures the KV read rate from the step-time difference between one and four decodes (decode\_calib.py in the reproduction kit). The measured roofs of Section 2 are these two numbers: the prefill rate at a 128k context, 22,794 tokens per second, converted to FLOP/s, and 4.2 TB/s per GPU, 53% of the datasheet's 8 TB/s. The compute roof is evaluated near the runs' mean context (110k to 124k tokens); prompts range from about 34k at p10 to 251k at p99, and per-token prefill slows as context grows, so a roof weighted by the actual mix would sit a few percent lower.
 
 The B200 deployment the comparison in Section 6 ran on was calibrated on 11 October 2026: one replica of Qwen3-Coder-480B-A35B-FP8 at TP=8 with expert parallelism, same flags as the fleet (8k chunk, 64 sequences, 0.9 memory utilisation, 64-token blocks), on 8 × B200 with vLLM v0.28.0, the version Dynamo v1.5.0 pins and therefore the engine both stacks ran. An 8 × H200 replica with vLLM v0.27.1 was calibrated the same way the day before and is kept for reference; the B200 numbers on v0.27.1 were within 2% of these on every row.
 
@@ -341,7 +319,7 @@ The B200 deployment the comparison in Section 6 ran on was calibrated on 11 Octo
 | Step-time floor, one short sequence | 7.9 ms | 5.8 ms | launch and collective overhead: a mixture-of-experts step reads only the experts it touches, about 35 GB of 480 at one sequence |
 | Prefill interference | a decode step sharing its iteration with an 8k chunk takes about 310 ms (10 ms alone) | about 220 ms (7.6 ms alone) | 8 concurrent 131k-token requests; median TPOT 400 ms on H200, 259 ms on B200 while the others prefilled |
 
-## Appendix B. The step-time law and the walls
+## Appendix B. The step-time law and the ridge
 
 This appendix derives the ceiling R used throughout from the three costs of a step described in Section 3, with the symbols of Section 3 and the calibrated inputs of Appendix A.
 
@@ -369,7 +347,7 @@ For a dense model that is the whole computation. For a mixture-of-experts model 
 
 The roofline R(I, O, h) is the largest λ that satisfies all four, times (I + O), per accelerator. Time per output token is t\_iter, and time to first token is the queue wait plus I(1−h)/T\_b iterations. Neither is a resource; both are what the resources are spent against, and where a time-per-output-token target applies, R is evaluated at the concurrency that target admits. Two corrections to carry. With a distribution of output lengths the resident context is I + ½Ō(1 + CV²), because a snapshot of the batch catches long generations in proportion to their length, so at CV² = 1 the decode share doubles. Writing the iteration as a sum instead of a max is the conservative form that bounds an engine overlapping nothing; measured inter-token latencies in the llm-d guides sit nearer the max. For a mixture-of-experts model the weight term W\_b is not constant: a step reads only the experts its tokens route to, so with E experts and k active per token the bytes read grow with the number of tokens in the step, decode and prefill alike, as the dense weights plus E(1 − (1 − k/E)^n)·e expert weights, from about 35 GB at one token to 374 GB at 29 and nearly all 480 GB once a step carries a few hundred tokens, for Qwen3-Coder-480B. The ceilings used here take that form; the small-batch floor is then launch and collective overhead rather than bandwidth.
 
-### B.2 The ridge and the output-length wall
+### B.2 The ridge
 
 Per active request, with U uncached prompt tokens, resident context L and output O (Section 3), each iteration costs compute for its amortised uncached prefill and its decode token, and a read of its resident context:
 
@@ -383,21 +361,4 @@ These are the terms that grow with load. The weight stream W\_b/W is paid once p
 O^{*}(L, U) = \frac{r\, U}{L - r} \quad (L > r), \qquad r = \frac{BW}{R_{pf}}
 ```
 
-Contexts shorter than the ridge r are compute-bound at any output length. Longer than r, memory binds once the output exceeds rU/(L − r). Rearranged, compute binds when U/O > L/r − 1: the uncached input per output token must exceed the context in ridges, less one. With nothing cached (U = L = I) this is 1/I + 1/O > 1/r, a harmonic mean of input and output below 2r, which for a long input reduces to O < r: 1,123 tokens on the reference deployment, so memory binds above about 1,100 output tokens. With everything cached (U = 0) the boundary is zero: a reused context longer than r is memory-bound whatever its output length, which is where the agentic workload of Section 6 sits (L = 117k, U = 7.5k, boundary 73 output tokens against 386 produced). The ridge is the hardware's bytes per FLOP times the model's FLOPs per token over its KV bytes per token, so gpt-oss-120b on an H200 lands at 1,167 and latent-attention models land higher.
-
-![O*(L, U) = rU/(L − r) for the reference deployment, r = 1,123 · 7 context lengths × 4 uncached-prefill levels](figures/fig5-output-wall.png)
-
-*O*(L, U) = rU/(L − r) for the reference deployment, r = 1,123 · 7 context lengths × 4 uncached-prefill levels*
-
-Inside the memory-bound region, whether bandwidth or capacity binds does not depend on the workload. At the capacity wall a step streams the weights, reads the KV of every resident sequence (C/W, the time to scan the whole KV allocation, whatever I and O are), and computes. More memory raises throughput only by spreading the weight stream over more sequences; more bandwidth shortens the weight stream and the KV read together. So bandwidth wins at the wall when the resident KV weighs more than the weights, and capacity wins when the weights dominate the device. For the reference deployment the ratio is 1.19 (76 GB of KV against 66 GB of weights), so the two bind almost together. An 8B model on an 80 GB device, ratio near 4, is bandwidth-bound at the wall. A 70B model at TP=2 that nearly fills its devices, ratio near 0.15, is capacity-bound.
-
-### B.3 Validation against a published regime change
-
-The one independent check of the ceiling is the llm-d tiered-prefix-cache guide. It measured the same fleet (8 × Qwen3-32B at TP=2 on H100) on the same workload (250 groups of 5 prompts sharing a 16,000-token prefix, 256 tokens in and out per prompt, open loop at 40 requests per second) with and without a 200 GiB host tier per replica. The ceiling predicts the regime change and both plateaus within 10%.
-
-| Arm | ρ | Predicted ceiling, fleet tok/s | Binding resource | Measured, fleet tok/s | η |
-| --- | --- | --- | --- | --- | --- |
-| HBM only (the 4.6M-token working set is twice the fleet's HBM KV) | 0.40, an oracle at HBM capacity | 127k | compute | 116k | 0.55 |
-| With the host tier (the working set fits) | 0.79 | 306k | memory | 331k | 1.08 |
-
-The HBM-only fleet reached 0.55 of what its hardware allowed, and the gap is the KV layer: the reuse was reachable and the engine's LRU threw it away. The 1.08 is not a result but a calibration signal: α\_W for this deployment was assumed at 0.70 rather than measured (Section 9), and a measured value would raise the second ceiling. One other published result is excluded for the opposite reason. The optimized-baseline guide's shared-prefix workload scores 1.48 because co-resident sequences sharing a 6,000-token system prompt share its KV blocks and, with cascade attention, its reads, which the ceiling charges each sequence in full (the second row of Section 8).
+Contexts shorter than the ridge r are compute-bound at any output length. Longer than r, memory binds once the output exceeds rU/(L − r). Rearranged, compute binds when U/O > L/r − 1: the uncached input per output token must exceed the context in ridges, less one. With nothing cached (U = L = I) this is 1/I + 1/O > 1/r, which for a long input reduces to O < r: on the B200 deployment memory binds above about 3,600 output tokens. With everything cached (U = 0) the boundary is zero: a reused context longer than r is memory-bound whatever its output length, which is where the agentic workload of Section 6 sits. The ridge is the hardware's bytes per FLOP times the model's FLOPs per token over its KV bytes per token, so latent-attention models, with fewer KV bytes per token, land higher.

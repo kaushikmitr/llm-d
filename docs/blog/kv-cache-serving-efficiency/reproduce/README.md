@@ -7,7 +7,7 @@ Four steps, each one script or one job, give η and its split for any workload o
 1. **Characterise the trace.** From the per-request records: mean input and output lengths I and O, turns per session and the pause between them, and ρ from an oracle replay in which every prefix stays cached. Count ρ over the whole trace, each session's first turn included.
 2. **Calibrate the deployment.** Two jobs on one replica: prefill throughput at the trace's context, and the decode KV-read rate from the step-time difference between one and four long-context decodes. With KV bytes per token, HBM available for KV and weight bytes per step, that is all R needs (Appendix A).
 3. **Compute R and what binds.** The closed form of Appendix B, or the step-time law iterated over the batch. If capacity binds, note the batch at the wall and the KV the paused sessions need outside HBM: turn rate × pause × context. That number sizes a host tier before one is bought.
-4. **Sweep the load and split the shortfall.** Run an ascending ladder of session counts; at each level take the steady window and record the hit rate in every tier, HBM occupancy, running and waiting requests, preemptions, step rate, and per-request Z and T. η is the peak over R; client, reuse and engine follow from Section 3.
+4. **Sweep the load and split the shortfall.** Run an ascending ladder of session counts; at each level take the steady window and record the hit rate in every tier, HBM occupancy, running and waiting requests, preemptions, step rate, and per-request Z and T. η is the peak over R; client, reuse and engine follow from Section 4.
 
 The split then names the lever:
 
@@ -20,7 +20,7 @@ The split then names the lever:
 | Sessions idle beyond their tool pause, few requests in flight | Client | The load generator, not the stack. Fix it before concluding anything. |
 | All three factors near one and η still low | The ceiling | The hardware is what it is. Compare deployments, not stacks. |
 
-Section 6 is this procedure applied once.
+Section 6 of the post is this procedure applied once; the scripts below are what ran it.
 
 ## Scripts, by step
 Everything used for the post, arranged by the four steps of its Section 7. Paths below are relative to this folder. Set `KUBE_CONTEXT` (and `NAMESPACE`, default `kv-fleet`) before running anything that talks to a cluster.
