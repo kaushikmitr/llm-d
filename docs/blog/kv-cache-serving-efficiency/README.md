@@ -94,13 +94,13 @@ R is an upper bound by construction. It assumes the hit rate is the workload's o
 
 ### The ceiling for the B200 fleet
 
-On the B200 deployment calibrated in Appendix A, the agentic workload (I = 117k, O = 386, ρ = 0.94) has a ceiling of 27.6k tokens per second per GPU: 221k per replica and 1.33M for the six-replica fleet, capacity-bound at about 29 resident sequences and a 40 ms step. Compute is at 62% when capacity binds, so the deployment sits near its ridge. Output means come from the request bodies: the harness's own output count is wrong on about one turn in 200, recording up to 246k tokens for a 30 s turn, so each request's max\_tokens is used instead. The ceiling keeps KV in HBM only while a sequence decodes. At the ceiling the fleet completes 11.3 turns per second; with the trace's 12 s mean tool pause that is about 23 paused sessions per replica, whose KV, about 2.7M tokens, has to be held outside HBM for the ceiling to be reachable at all. The 6.19M-token host tier is what holds it here.
-
-What it would take to reach R, in one picture: the figure draws the throughput the step-time law allows at h = ρ as the number of sequences decoding per replica grows. The line rises with the batch, because every step reads the weights once however many sequences share it, and ends where the batch fills HBM, at 29 sequences. A fleet whose HBM also had to hold the paused sessions would stop at 13; the host tier moves the wall. Reaching R therefore means three things: keep HBM for decoding sequences only, hold enough sessions that 29 of them are decoding per replica (about 54 live per replica, 320 in the fleet), and keep each step at the memory-read time the law assumes. The measured runs show which of these the stacks managed. llm-d at 120 sessions sits on the line with six decoding; at 180 it ran twelve but delivered 0.71 of what twelve allow, and at 240 eighteen at 0.52, as the engine's step times grew with chunked prefill and host-tier copies and then preemption. Dynamo and round-robin never pass twelve, because their lost reuse turns added sessions into recompute. Three consequences follow from the same law: without the host tier the wall sits at 13 sequences and the ceiling at 0.69 of R; FP8 KV halves the bytes per token and doubles the batch HBM holds, but raises R only 1.6 times, because compute then binds; and a stack that sustains twelve decoding per replica at the law's step time reaches 0.66 of R, so llm-d's 0.47 at that batch means its steps ran 1.4 times longer than the law allows.
+On the B200 deployment calibrated in Appendix A, the agentic workload (I = 117k, O = 386, ρ = 0.94) has a ceiling of 27.6k tokens per second per GPU, 1.33M for the six-replica fleet. It is capacity-bound: the figure draws the throughput the step-time law allows as the number of sequences decoding per replica grows, and the line ends where their KV fills HBM, at 29. The line assumes HBM holds decoding sequences only. At the ceiling about 23 sessions per replica are paused in a tool call at any moment, and their KV has to live somewhere else; a fleet whose HBM also held them would stop at 13 sequences and 0.69 of R. The host tier is what moves that wall.
 
 ![ideal curve from the step-time law of Appendix B at h = ρ for the B200 fleet of Appendix A; measured points from the nine runs of Section 6, at the mean number of requests decoding per replica over the steady window](figures/fig4c-ideal-throughput-vs-batch.png)
 
 *ideal curve from the step-time law of Appendix B at h = ρ for the B200 fleet of Appendix A; measured points from the nine runs of Section 6, at the mean number of requests decoding per replica over the steady window*
+
+The measured runs show how far each stack climbed the line. llm-d at 120 sessions sits on it with six decoding; at 180 and 240 it ran twelve and eighteen but fell below the line as the engine's steps lengthened with chunked prefill, host-tier copies and then preemption. Dynamo and round-robin never pass twelve decoding, because their lost reuse turns added sessions into recompute. Section 6 splits these gaps into their factors.
 
 ### Reporting η
 
@@ -218,7 +218,7 @@ The split reads this way. The client factor is the load's own: at llm-d's peak t
 
 ### Run notes
 
-Per-replica throughput stayed within about 10% of each level's mean, except round-robin at 120 sessions, where two replicas held 17 running requests each against 6 to 10 on the others, and 0 to 6 requests per level were lost to disconnects.
+Per-replica throughput stayed within about 10% of each level's mean, except round-robin at 120 sessions, where two replicas held 17 running requests each against 6 to 10 on the others, and 0 to 6 requests per level were lost to disconnects. Output lengths come from each request's max\_tokens, because the harness's own output count is wrong on about one turn in 200.
 
 ## 7. Doing this for your own workload
 
