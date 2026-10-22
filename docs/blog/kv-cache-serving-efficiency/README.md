@@ -46,7 +46,7 @@ Section 2.1 draws the line between compute-bound and memory-bound from four numb
 
 A roofline chart places a run by two numbers: on the x axis its arithmetic intensity, the FLOPs it performed per byte read from HBM, and on the y axis the FLOP/s it achieved. The hardware caps it from two sides: a flat compute roof at the peak FLOP/s, and a sloped bandwidth roof, bandwidth times arithmetic intensity, which caps a step that reads more than it computes. The two roofs meet at the ridge. Left of it a step spends longer reading memory than computing; right of it, longer computing.
 
-The figure places the nine fleet runs of Section 6 on this chart. The roofs are what this deployment was measured to reach (Appendix A): 53% of the datasheet bandwidth, and the prefill rate at a 128k context, 27% of the datasheet FLOP/s. They meet at about 290 FLOP/B.
+The figure places the nine fleet runs of Section 6 on this chart. The dashed roof is the B200 datasheet; the solid roof is what this deployment was measured to reach (Appendix A): 53% of the datasheet bandwidth, and the prefill rate at a 128k context, 27% of the datasheet FLOP/s. The measured roofs meet at about 290 FLOP/B.
 
 The hit rate decides where a run lands. At a 0.98 hit rate the fleet sits on the bandwidth roof: each step streams the weights and the KV of about six decoding requests per replica to produce six tokens, so every byte read serves few FLOPs. As the hit rate falls, the same workload moves right and up, across the ridge onto the compute roof. The GPUs get busier and the useful token rate gets lower, because the added compute is recomputing contexts the stack failed to reuse.
 
