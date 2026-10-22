@@ -38,7 +38,7 @@ Seen from the KV cache, these are facets of one placement problem, and the quest
 
 ## 2. Compute or memory: where a run sits on the roofline
 
-Section 2.1 draws the line between compute-bound and memory-bound from U, L, O and the batch size. The hit rate affects it only through U: ρ places the ceiling, and a run's measured h places that run.
+Section 2.1 draws the line between compute-bound and memory-bound from four numbers, introduced here and collected in the table of Section 3. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens, token-weighted, that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far, which every decode step reads from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U: ρ places the ceiling, and a run's measured h places that run.
 
 ![Section 6 runs on the B200 fleet, cluster106, 20 October 2026 · FLOPs and bytes derived from sampled engine counters and the model shape (Appendix A); tokens restored from the host tier are not counted as recomputed · 9 runs, 3 stacks](figures/fig1-measured-roofline.png)
 
