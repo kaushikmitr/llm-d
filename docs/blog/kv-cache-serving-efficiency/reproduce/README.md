@@ -9,9 +9,9 @@ Four steps, each one script or one job, give η and its split for any workload o
 3. **Compute R and what binds.** The closed form of Appendix B, or the step-time law iterated over the batch. If capacity binds, note the batch at the wall and the KV the paused sessions need outside HBM: turn rate × pause × context. That number sizes a host tier before one is bought.
 4. **Sweep the load and split the shortfall.** Run an ascending ladder of session counts; at each level take the steady window and record the hit rate in every tier, HBM occupancy, running and waiting requests, preemptions, step rate, and per-request Z and T. η is the peak over R; client, reuse and engine follow from Section 4. The counters also say which wall a saturated run is on: requests waiting for KV blocks mean capacity; step time growing with the number and length of resident contexts, with HBM traffic near the calibrated bandwidth, means bandwidth; steps filled with prefill chunks at the calibrated prefill rate, with HBM traffic low, mean compute.
 
-The split says which factor is low, and the counters recorded in step 4 say why. Read one row per low factor; a run can match more than one.
+The split says which factor is low, and the counters recorded in step 4 say why. Read the row for each factor that is below one; a run can match more than one.
 
-| Low factor | Hit rate vs ρ | HBM occupancy | Preemptions | Requests waiting | Step time vs the law | Cause | Lever |
+| Factor below 1 | Hit rate vs ρ | HBM occupancy | Preemptions | Requests waiting | Step time vs the law | Cause | Lever |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Client | any | any | any | any | any | Sessions idle beyond their tool pause, or too few sessions offered | The load generator, not the stack; fix it before concluding anything |
 | Reuse | below ρ from the lightest load | not full | none | any | any | Routing: turns land on replicas that do not hold their context, or the index does not see a tier | The index and the affinity rule, before buying memory |
