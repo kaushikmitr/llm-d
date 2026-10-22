@@ -104,7 +104,7 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 
 ### Reporting η
 
-For η to be comparable across systems it must be published with: the Appendix A parameters and how the two efficiency factors were measured; token-weighted mean input and output lengths, with the output length's coefficient of variation; ρ and the oracle it came from; the offered rate or concurrency; and the client's sessions and per-turn idle time, so the client factor can be recomputed. Four traps account for most incomparable numbers today. Hit rates averaged per request instead of per token overweight short requests. Benchmarks that do not state their prefix structure (distinct prefixes, their length, turns per session, inter-turn gap) cannot be reproduced on the axis that matters. A 99% improvement in time to first token over a round-robin baseline, at a load that baseline cannot sustain, measures queueing, not caching. And a baseline carried over from another day, or a learned component measured cold, is a different experiment.
+An η is comparable only with its inputs beside it: the calibration of Appendix A, the workload's I, O and ρ with the oracle that produced ρ, the offered load, and the client's sessions and idle time so the client factor can be recomputed. Four habits make most published numbers incomparable: hit rates averaged per request rather than per token; benchmarks that do not state their prefix structure; a latency win over a baseline at a load the baseline cannot sustain, which measures queueing, not caching; and a baseline carried over from another day.
 
 ## 4. Where the shortfall goes
 
