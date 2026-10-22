@@ -114,7 +114,7 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 
 *nine runs of Section 6 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch with full reuse, T_h the same at the run's hit rate · η at each run's own I and O*
 
-The figure draws the split for the nine runs of Section 6. Each bar is one session's turn cycle: the idle time Z is the client's, the first service segment is what an ideal engine would take, and the two loss segments are what the reuse and engine factors measure. The split uses no measured batch size and no assumption about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity.
+The figure draws the split for the nine runs of Section 6. Each bar is one session's turn cycle: the idle time Z is the client's, the first service segment is what an ideal engine would take, and the two loss segments are what the reuse and engine factors measure. T\_ideal and T\_h are evaluated at the run's own batch, the mean number of requests decoding per replica, so each run is compared with an ideal engine under its own load; nothing is assumed about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity.
 
 ## 5. Where KV can be
 
