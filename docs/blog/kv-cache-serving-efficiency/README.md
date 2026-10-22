@@ -116,21 +116,9 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 
 The figure draws the split for the nine runs of Section 6. Each bar is one session's turn cycle: the idle time Z is the client's, the first service segment is what an ideal engine would take, and the two loss segments are what the reuse and engine factors measure. T\_ideal and T\_h are evaluated at the run's own batch, the mean number of requests decoding per replica, so each run is compared with an ideal engine under its own load; nothing is assumed about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity.
 
-## 5. Where KV can be
+## 5. How a stack keeps the hit rate up
 
-![where KV can be and how it moves · one index, three moves](figures/fig3-where-kv-can-be.png)
-
-*where KV can be and how it moves · one index, three moves*
-
-A prompt token's KV is in one of three places relative to the replica that will serve the request: resident in that replica's accelerator memory, which costs nothing; somewhere it can be fetched from, at a price set by the slowest link on the path; or nowhere, at the prefill price of one token over R\_pf. The order of fetch prices is stable across hardware generations even as the numbers move: accelerator hit, then host memory over PCIe, then a peer's host memory over the network, then local disk, then recompute, then remote storage. Three moves bring request and KV together, and each is priced against the roofline.
-
-**Moving the request.** Routing to the replica that holds the prefix raises h toward ρ at no transfer cost, but it concentrates load. The router's rule is a comparison in one unit: the warm replica's queued prefill, in tokens over R\_pf, against the cold replica's extra prefill, (1 + n\_cold)·Δu/R\_pf, where the factor counts the decode streams the cold prefill would stall. Van Drie's companion derivation adds a memory toll to the cold side that grows as the fleet's safe HBM utilisation approaches one. That reproduces the map: balance matters when compute binds, affinity matters when memory binds.
-
-**Moving the KV.** A prefix held on a peer's host tier can be pulled host to host in T\_0 + L·b/B and recomputed in L/R\_pf, so the pull wins above a crossover length T\_0/(1/R\_pf − b/B), about 1,200 tokens for gpt-oss-120b on RDMA with the fitted T\_0 and B. Demoting KV to a host tier instead of evicting it keeps h at ρ as long as the idle working set fits. For sessions that go quiet between turns, the idle set is concurrent sessions times their average context; when it exceeds what the fleet retains, the engine's LRU evicts and h falls to ρ times the retained fraction. A phase-staggered batch needs only O tokens of headroom for growth whatever its size, because every completion frees what the batch just grew; a synchronised burst of n requests, which is what an agent's fan-out produces, grows by n·O with nothing to recycle. An interactive Rung 0 simulation of both cases is at https://claude.ai/artifact/EBq2S6B3iiC7MVJquEw4ei.
-
-**Moving the compute.** Running prefill on a separate pool and shipping the KV once removes prefill's interference with decode and pays I·b/B + T\_0 per request on the interconnect. The companion derivation gives the threshold: split when decode concurrency exceeds R\_pf/B\_tok, corrected for setup latency and for history already resident on the decode side. Under a split, the history the decode pool generates lives there while the next turn's prefill happens elsewhere, so the two pools need a shared tier or a peer pull, or the conversation is recomputed every turn.
-
-Eviction is not a move. It is what happens when every tier is full: a block is dropped, its next use pays a full recompute, and the only decision left is which block to drop.
+A turn's prompt KV is either on the replica that will serve it, somewhere it can be fetched from, or nowhere, in which case it is recomputed. A stack has three moves to make the first case the common one: route the request to the replica that holds its prefix; move the KV, to a host tier when its session pauses or from a peer when it resumes elsewhere; or move the compute, running prefill on a separate pool and shipping the KV once. Each has a price, in transfer time or in load concentrated on one replica, and a router's job is to pay it only when it beats recompute. Eviction is not a move: it is what happens when every tier is full, and the evicted KV's next use pays a full recompute. The three stacks of Section 6 differ in which of these moves they make and how well their index knows where KV is.
 
 ## 6. Empirical evaluation: three stacks on a B200 fleet
 
@@ -267,7 +255,6 @@ The roofline framework reduces serving evaluation to one ratio, η, and splits i
 - [llm-d-router](https://github.com/llm-d/llm-d-router): prefix-cache-affinity-filter, token-load-scorer, precise-prefix-cache-producer, p2p-source-producer
 - [Reproduction kit for this post](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce): deployment manifests, calibration jobs, harness, analysis scripts and results
 - [inference-perf](https://github.com/kubernetes-sigs/inference-perf), the load generator
-- Van Drie, L., *LLM Admission and Routing: A Step-by-Step Derivation from the Spacetime Trapezoid*, derivation companion, 2026
 - [NVIDIA Dynamo KV cache aware routing](https://docs.nvidia.com/dynamo/user-guides/kv-cache-aware-routing)
 
 ## Appendix A. Inputs and calibration
@@ -279,7 +266,6 @@ The roofline framework reduces serving evaluation to one ratio, η, and splits i
 | W\_peak | HBM bandwidth per replica | datasheet |
 | α\_W | decode read efficiency | calibration job: marginal KV-read bandwidth between one and four long-context decodes, over W\_peak |
 | C | HBM bytes available for KV | engine startup log |
-| B, T\_0 | effective inter-node link for KV, and setup latency | fitted to the llm-d P2P ladder (gpt-oss-120b on H200, RDMA): 17.3 GB/s, 26 ms |
 | N | active parameters | model card |
 | b | KV bytes per token, 2 · layers · KV heads · head dim · bytes | model shape, or host-tier bytes loaded over host-tier hits |
 | W\_b | weight bytes a step reads | model card; for a mixture of experts, the experts the step's tokens touch (Appendix B) |
