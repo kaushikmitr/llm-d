@@ -214,14 +214,7 @@ Per-replica throughput stayed within about 10% of each level's mean, except roun
 
 ## 7. Doing this for your own workload
 
-Four steps, each one script or one job, give η and its split for any workload on any deployment.
-
-1. **Characterise the trace.** From the per-request records: mean input and output lengths I and O, turns per session and the pause between them, and ρ from an oracle replay in which every prefix stays cached. Count ρ over the whole trace, each session's first turn included.
-2. **Calibrate the deployment.** Two jobs on one replica: prefill throughput at the trace's context, and the decode KV-read rate from the step-time difference between one and four long-context decodes. With KV bytes per token, HBM available for KV and weight bytes per step, that is all R needs (Appendix A).
-3. **Compute R and what binds.** The closed form of Appendix B, or the step-time law iterated over the batch. If capacity binds, note the batch at the wall and the KV the paused sessions need outside HBM: turn rate × pause × context. That number sizes a host tier before one is bought.
-4. **Sweep the load and split the shortfall.** Run an ascending ladder of session counts; at each level take the steady window and record the hit rate in every tier, HBM occupancy, running and waiting requests, preemptions, step rate, and per-request Z and T. η is the peak over R; client, reuse and engine follow from Section 4. The counters also say which wall a saturated run is on: requests waiting for KV blocks mean capacity; step time growing with the number and length of resident contexts, with HBM traffic near the calibrated bandwidth, means bandwidth; steps filled with prefill chunks at the calibrated prefill rate, with HBM traffic low, mean compute.
-
-The split then names the lever:
+The procedure is four steps: characterise the trace (I, O and ρ from an oracle replay), calibrate the deployment (two jobs on one replica), compute R, then sweep the load and split the shortfall. Each step is one script in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce), whose README walks through them, and Section 6 is the procedure applied once. The split then names the lever:
 
 | What you see | Factor | Lever |
 | --- | --- | --- |
@@ -231,8 +224,6 @@ The split then names the lever:
 | Hit rate holds, HBM half empty, requests waiting, step times above the law | Engine, from scheduling | Chunk size and admission: prefill chunks stalling decodes, tier copies in the critical path. |
 | Sessions idle beyond their tool pause, few requests in flight | Client | The load generator, not the stack. Fix it before concluding anything. |
 | All three factors near one and η still low | The ceiling | The hardware is what it is. Compare deployments, not stacks. |
-
-Section 6 is this procedure applied once. Doing it took an effort like this post; the scripts, configs and calibration jobs that did it are in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce), so the next one is cheaper.
 
 ## 8. What the ceiling leaves out
 
