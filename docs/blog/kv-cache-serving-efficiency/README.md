@@ -38,7 +38,7 @@ Seen from the KV cache, these are facets of one placement problem, and the quest
 
 ## 2. Compute or memory: where a run sits on the roofline
 
-Section 2.1 draws the line between compute-bound and memory-bound from four numbers, introduced here and collected in the table of Section 3. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens, token-weighted, that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far, which every decode step reads from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U: ρ places the ceiling, and a run's measured h places that run.
+Section 2.1 draws the line between compute-bound and memory-bound from four numbers, introduced here. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens, token-weighted, that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far, which every decode step reads from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U: ρ places the ceiling, and a run's measured h places that run.
 
 ![Section 6 runs on the B200 fleet, cluster106, 20 October 2026 · FLOPs and bytes derived from sampled engine counters and the model shape (Appendix A); tokens restored from the host tier are not counted as recomputed · roofs as measured on one replica: 1.22 PFLOP/s per GPU (27% of the 4.5 dense FP8 datasheet peak) and 4.2 TB/s (53% of 8) · 9 runs, 3 stacks](figures/fig1-measured-roofline.png)
 
@@ -85,18 +85,8 @@ An inference engine serves requests in steps. One step is one forward pass over 
 Serving efficiency η is one number per workload and hardware: the tokens per second per accelerator a system achieved, divided by the ceiling R. R is the tokens per second the same accelerators could sustain if every reusable prefix token were reused (h = ρ) and KV occupied HBM only while its request was decoding. Tokens are input plus output, so a cached prompt token counts as served just as a recomputed one does; what differs is what it cost.
 
 ```latex
-\eta = \frac{\text{achieved tokens/s per accelerator}}{R(I,\ O,\ \rho;\ F,\ W,\ C,\ b,\ W_b,\ c)}
+\eta = \frac{\text{achieved tokens/s per accelerator}}{R}
 ```
-
-| Symbol | Meaning | How it is obtained |
-| --- | --- | --- |
-| I, O | Mean prompt and output length of the workload, in tokens, token-weighted over requests | From the trace or the request bodies; the harness's output count is not trusted (Section 6) |
-| ρ | Intrinsic overlap: the prefix hit rate an oracle with unlimited retention would reach on this trace. ρ − h is the reuse a stack lost, to routing and to eviction from every tier | Computed from the trace once, at fleet capacity |
-| h | Prefix-cache hit rate the system achieved, token-weighted | The engine's own counters: cached prompt tokens over prompt tokens |
-| U | Uncached input: (1 − h) × I, the prompt tokens that must be computed | From h and I |
-| L | Resident context: the whole prompt plus the output so far. Every decode step reads all of it from HBM, and it occupies capacity for as long as it is held | I + O/2, the average over a request's life |
-| R | The ceiling: tokens per second per accelerator at the first saturated resource, with h = ρ. R alone means R(ρ); R(h) is the same formula at a run's achieved hit rate | Appendix B, from the calibrated inputs of Appendix A |
-| η | Serving efficiency: achieved tokens per second per accelerator over R | Peak steady-state throughput over a sweep of offered load, divided by R |
 
 R comes from one rule, called the step-time law in this post: a step takes the longer of its compute time and its memory time, and a replica's throughput is the most it can push through while every step stays within compute, bandwidth and HBM capacity (equations in Appendix B). R is evaluated at the workload's intrinsic overlap ρ, not at the hit rate the system achieved, so any reuse the system fails to find, keep or share shows up as a shortfall from R. It rests on three idealisations, each of which makes it an upper bound: KV occupies HBM only while its request is decoding, with paused sessions held elsewhere at no cost; prefill is spread evenly over the steps rather than run in whole chunks; and compute and memory traffic overlap fully within a step, so a step takes the longer of the two. Smaller omissions are listed in Section 8. Whether the workload is compute-bound or memory-bound is a property of the workload and the hardware, given by the rule of Section 2.1 at the ceiling's batch. How much a system serves depends on load, so η is taken at the peak of a sweep: record steady-state throughput at each of several offered loads and divide the highest by R.
 
@@ -312,7 +302,7 @@ The B200 deployment the comparison in Section 6 ran on was calibrated on 11 Octo
 
 ## Appendix B. The step-time law and the ridge
 
-This appendix derives the ceiling R used throughout from the three costs of a step described in Section 3, with the symbols of Section 3 and the calibrated inputs of Appendix A.
+This appendix derives the ceiling R used throughout from the three costs of a step described in Section 3, with the symbols of Sections 2 and 3 and the calibrated inputs of Appendix A.
 
 ### B.1 The step-time law
 
