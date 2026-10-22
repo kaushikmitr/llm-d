@@ -56,15 +56,15 @@ Compute-bound and memory-bound in this post describe a workload, by where its ce
 
 Each output token costs the engine two things: one read of its whole context, L tokens of KV, and the compute for its share of the uncached prompt, U/O prefill tokens. The **ridge** r is the exchange rate between them, the number of KV tokens the device reads in the time it prefills one token, from the two calibrated rates:
 
-```latex
+$$
 r = \frac{\text{HBM bandwidth} / \text{KV bytes per token}}{\text{prefill tokens per second}}
-```
+$$
 
 r depends on the hardware and the model only; for Qwen3-Coder-480B on 8 × B200 it is about 3,600. Compute dominates a step when the compute per output token exceeds the memory read per output token, both counted in prefill-token time, with one correction: the weights a step streams count as extra context shared by the n sequences in it, W\_b(n)/(n·b) tokens where b is the KV bytes per token. The rule is
 
-```latex
+$$
 \underbrace{1 + \frac{U}{O}}_{\substack{\text{compute per output token:}\\ \text{the decode token plus its share of uncached prefill}}} \;>\; \underbrace{\frac{L + W_b(n)/(n\,b)}{r}}_{\substack{\text{memory per output token:}\\ \text{context plus shared weights, in prefill-token time}}}
-```
+$$
 
 For the agentic workload (L = 117k, U = 7.5k, O = 386), U/O = 19 against a threshold of 50 at the ceiling's batch of 29, so the workload is memory-bound. A stack that lets the hit rate fall raises U/O past the threshold, and its steps are then dominated by recompute. Capacity is not in the rule; it caps n and enters the ceiling as a separate condition (Appendix B).
 
@@ -84,9 +84,9 @@ An inference engine serves requests in steps. One step is one forward pass over 
 
 Serving efficiency η is one number per workload and hardware: the tokens per second per accelerator a system achieved, divided by the ceiling R. R is the tokens per second the same accelerators could sustain if every reusable prefix token were reused (h = ρ) and KV occupied HBM only while its request was decoding. Tokens are input plus output, so a cached prompt token counts as served just as a recomputed one does; what differs is what it cost. How much a system serves depends on load, so η is taken at the peak of a sweep: steady-state throughput at each of several offered loads, the highest divided by R.
 
-```latex
+$$
 \eta = \frac{\text{achieved tokens/s per accelerator}}{R}
-```
+$$
 
 R comes from one rule, called the step-time law in this post: a step takes the longer of its compute time and its memory time, and a replica's throughput is the most it can push through while every step stays within compute, bandwidth and HBM capacity (equations in Appendix B).
 
@@ -290,21 +290,21 @@ This appendix derives the ceiling R used throughout from the three costs of a st
 
 Engines run continuous batching with chunked prefill. One scheduler iteration holds up to T\_b tokens of prefill chunks plus one token for every sequence in decode, and runs them as one forward pass. Prefill and decode are not two pipelines with separate bounds: they share one iteration, and a prefill chunk lengthens the step for every decode sequence in it. The iteration is therefore the unit. With n\_p prefill tokens and n\_d decode tokens in the iteration, its duration is the larger of its compute time and its memory time, and Little's law ties the counts to the request rate λ per replica at hit rate h:
 
-```latex
+$$
 t_{iter} = \max\left( \frac{2N\,(n_p + n_d)}{F},\; \frac{W_b + n_d\, b\, \bar{c} + \frac{n_p}{T_b}\, b\, I}{W} \right), \quad n_p = \lambda I (1-h)\, t_{iter}, \quad n_d = \lambda O\, t_{iter}, \quad \bar{c} = I + \tfrac{O}{2}
-```
+$$
 
 The memory term reads the weights once, the KV of every decode sequence once (each decode token attends over its whole context), and the prefix once per prefill chunk. c̄ is the time-average resident context: a request's KV traces a trapezoid in memory and time, from I at arrival to I + O at exit. A rate is sustainable only while all four of the following hold, and the first to fail as λ rises is the binding resource:
 
-```latex
+$$
 \text{compute: } 2N\lambda\,(I(1-h)+O) < F \qquad \text{bandwidth: } \lambda\, b\,(O\bar{c} + I(1-h)\tfrac{I}{T_b}) < W \qquad \text{capacity: } n_d\, b\, \bar{c} \le C \qquad \text{budget: } n_p \le T_b
-```
+$$
 
 Each condition bounds λ, the request rate one replica sustains, on its own, and three of them in closed form (the prefill-budget condition never binds at an 8k chunk). With U = (1 − ρ)·I and L = I + O/2, and dividing the replica's token rate by the accelerators it spans (8 GPUs at TP=8) to get the per-accelerator R:
 
-```latex
+$$
 \lambda_c = \frac{F}{2N\,(U + O)}, \qquad \lambda_w = \frac{W}{b\,(O L + U I / T_b)}, \qquad \lambda_m = \frac{C}{\frac{W_b}{W}\left(O L b + \frac{U I b}{2 T_b}\right) + C\,\frac{b\,(O L + U I / T_b)}{W}}, \qquad R = \frac{(I + O)\,\min(\lambda_c, \lambda_w, \lambda_m)}{\text{accelerators per replica}}
-```
+$$
 
 For a dense model that is the whole computation. For a mixture-of-experts model W\_b depends on how many tokens share a step, so it is evaluated at the tokens the solution implies: the n = λ\_m·O·t\_iter decoding tokens plus the n·U/O prefill tokens spread into the step, and the pair converges in two or three iterations. For the B200 fleet, λ\_m = 1.89 requests per second per replica with W\_b = 480 GB at 29 resident sequences and about 540 prefill tokens per step, which is the 27.6k tokens per second per GPU used throughout.
 
@@ -314,14 +314,14 @@ The roofline R(I, O, h) is the largest λ that satisfies all four, times (I + O)
 
 Per active request, with U uncached prompt tokens, resident context L and output O (Section 3), each iteration costs compute for its amortised uncached prefill and its decode token, and a read of its resident context:
 
-```latex
+$$
 c = \frac{1 + U/O}{R_{pf}}, \qquad m = \frac{L}{BW}, \qquad R_{pf} = \frac{F}{2N}, \quad BW = \frac{W}{b}
-```
+$$
 
 These are the terms that grow with load. The weight stream W\_b/W is paid once per iteration whatever the load, so at low load every decode step is dominated by it and per-token cost looks memory-bound, the familiar small-batch result. Compute-bound and memory-bound are used here for the ceiling, where the per-sequence terms have grown to their limit, and that classification does not depend on load. Compute binds there when c exceeds m: when the KV tokens scanned per processed token, L/(1 + U/O), is below the hardware's ridge r = BW/R\_pf. The weight stream is kept by charging it per sequence: a step shared by n sequences reads W\_b(n) once, which is W\_b/(n·b) tokens of KV each, so the comparison is made with L\_eff = L + W\_b(n)/(n·b) in place of L, and Section 2.1 draws it for several n. For a mixture of experts, W\_b(n) counts the experts touched by every token in the step, prefill tokens included, so it is evaluated at n(1 + U/O) tokens. The prefill rate falls with context, so r grows with L: at a 128k context the B200 ridge is about 5,800 rather than 3,600, which lowers the agentic threshold of Section 2.1 from 50 to about 30 and changes no conclusion. The hit rate appears nowhere but inside U. Solving the equality for O gives the boundary output length as a function of context and uncached prefill,
 
-```latex
+$$
 O^{*}(L, U) = \frac{r\, U}{L - r} \quad (L > r), \qquad r = \frac{BW}{R_{pf}}
-```
+$$
 
 Contexts shorter than the ridge r are compute-bound at any output length. Longer than r, memory binds once the output exceeds rU/(L − r). Rearranged, compute binds when U/O > L/r − 1: the uncached input per output token must exceed the context in ridges, less one. With nothing cached (U = L = I) this is 1/I + 1/O > 1/r, which for a long input reduces to O < r: on the B200 deployment memory binds above about 3,600 output tokens. With everything cached (U = 0) the boundary is zero: a reused context longer than r is memory-bound whatever its output length, which is where the agentic workload of Section 6 sits. The ridge is the hardware's bytes per FLOP times the model's FLOPs per token over its KV bytes per token, so latent-attention models, with fewer KV bytes per token, land higher.
