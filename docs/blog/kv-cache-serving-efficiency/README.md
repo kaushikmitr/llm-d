@@ -12,7 +12,7 @@ The shortfall from the ceiling splits into three factors whose product is η:
 2. **Reuse**: prompt tokens the system had to recompute, either because the request went to a replica that did not hold their KV or because it had been evicted.
 3. **Engine**: what the execution engine wasted at the hit rate it had.
 
-Separately, a run's arithmetic intensity, computed from the engine's token counters and the model's per-token costs, shows whether it was compute-bound or memory-bound. On an NVIDIA B200 fleet with a host KV tier, running an agentic coding workload, **llm-d** reaches 0.47 of the ceiling, **NVIDIA Dynamo** 0.22 and **round-robin** 0.14. The prefix hit rate each stack kept sets the ranking: llm-d holds reuse at the workload's level until HBM runs out of room for the sessions it is decoding; the other two lose reuse to recompute well before that. The framework is for infrastructure engineers building or selecting serving stacks and for vendors who want standardised performance claims.
+Separately, a run's arithmetic intensity, computed from the engine's token counters and the model's per-token costs, shows whether it was compute-bound or memory-bound. On an NVIDIA B200 fleet with a host KV tier, running an agentic coding workload, **llm-d** reaches 0.47 of the ceiling, **NVIDIA Dynamo** 0.22 and **round-robin** 0.14. The prefix hit rate each stack kept sets the ranking: llm-d keeps it at 0.90 or above until HBM fills with the sessions it is decoding, at 240 sessions; Dynamo and round-robin are at 0.76 and 0.62 at their lightest loads, with HBM a quarter full. The framework is for infrastructure engineers building or selecting serving stacks and for vendors who want standardised performance claims.
 
 ## 1. The question
 
