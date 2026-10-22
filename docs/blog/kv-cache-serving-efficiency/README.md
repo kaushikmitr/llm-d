@@ -110,7 +110,11 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 - **Reuse, (Z + T\_ideal)/(Z + T\_h).** Time lost recomputing prompt tokens, either because the request went to a replica that did not hold their KV or because it had been evicted.
 - **Engine, (Z + T\_h)/(Z + T).** Everything else the engine lost at the hit rate it had.
 
-The split uses no measured batch size, which depends on how fast the server is, and no assumption about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity. Section 6 computes all three factors for every run.
+![nine runs of Section 6 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch with full reuse, T_h the same at the run's hit rate · η at each run's own I and O](figures/fig3b-turn-cycle-split.png)
+
+*nine runs of Section 6 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch with full reuse, T_h the same at the run's hit rate · η at each run's own I and O*
+
+The figure draws the split for the nine runs of Section 6. Each bar is one session's turn cycle: the idle time Z is the client's, the first service segment is what an ideal engine would take, and the two loss segments are what the reuse and engine factors measure. The split uses no measured batch size and no assumption about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity.
 
 ## 5. Where KV can be
 
