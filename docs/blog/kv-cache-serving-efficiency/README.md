@@ -82,8 +82,6 @@ An inference engine serves requests in steps. One step is one forward pass over 
 2. **Bandwidth.** Every step streams the weights it touches and reads the KV of every decoding request, so its memory time grows with the number and length of resident contexts.
 3. **Capacity.** Every request whose KV is held, decoding or waiting for its next turn, occupies HBM; when HBM is full something is evicted and, unless a lower tier still holds it, must be recomputed when it returns.
 
-The KV cache enters all three. A cached prompt token costs no compute (a **prefix-cache hit**); a resident context costs bandwidth every step; a retained context costs capacity whether or not it is decoding.
-
 Serving efficiency η is one number per workload and hardware: the tokens per second per accelerator a system achieved, divided by the ceiling R. R is the tokens per second the same accelerators could sustain if every reusable prefix token were reused (h = ρ) and KV occupied HBM only while its request was decoding. Tokens are input plus output, so a cached prompt token counts as served just as a recomputed one does; what differs is what it cost.
 
 ```latex
