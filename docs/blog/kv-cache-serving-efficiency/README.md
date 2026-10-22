@@ -214,16 +214,17 @@ Per-replica throughput stayed within about 10% of each level's mean, except roun
 
 ## 7. Doing this for your own workload
 
-The procedure is four steps: characterise the trace (I, O and ρ from an oracle replay), calibrate the deployment (two jobs on one replica), compute R, then sweep the load and split the shortfall. Each step is one script in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce), whose README walks through them, and Section 6 is the procedure applied once. The split then names the lever:
+The procedure is four steps: characterise the trace (I, O and ρ from an oracle replay), calibrate the deployment (two jobs on one replica), compute R, then sweep the load and split the shortfall. Each step is one script in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce), whose README walks through them, and Section 6 is the procedure applied once. The split says which factor is low, and the counters recorded in the sweep say why. Read one row per low factor; a run can match more than one.
 
-| What you see | Factor | Lever |
-| --- | --- | --- |
-| Hit rate well below ρ while HBM is far from full and nothing is preempted | Reuse | Routing: turns land on replicas that do not hold their context. Fix the index or the affinity before adding memory. |
-| Hit rate holds at low load and falls as sessions are added, with HBM filling | Reuse, then engine | Retention: paused sessions are being evicted. A host tier, or fewer sessions per replica. |
-| Hit rate holds, HBM near full, preemptions, step times growing | Engine, from capacity | More HBM for decoding KV: fewer bytes per token, shorter contexts, a tier for everything not decoding. |
-| Hit rate holds, HBM half empty, requests waiting, step times above the law | Engine, from scheduling | Chunk size and admission: prefill chunks stalling decodes, tier copies in the critical path. |
-| Sessions idle beyond their tool pause, few requests in flight | Client | The load generator, not the stack. Fix it before concluding anything. |
-| All three factors near one and η still low | The ceiling | The hardware is what it is. Compare deployments, not stacks. |
+| Low factor | Hit rate vs ρ | HBM occupancy | Preemptions | Requests waiting | Step time vs the law | Cause | Lever |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Client | any | any | any | any | any | Sessions idle beyond their tool pause, or too few sessions offered | The load generator, not the stack; fix it before concluding anything |
+| Reuse | below ρ from the lightest load | not full | none | any | any | Routing: turns land on replicas that do not hold their context, or the index does not see a tier | The index and the affinity rule, before buying memory |
+| Reuse | near ρ at light load, falls as sessions are added | filling | any | any | any | Retention: paused sessions' KV is evicted | A host tier, or fewer sessions per replica |
+| Engine | near ρ | near full | yes | yes | above | Capacity: the decoding sessions' KV fills HBM | Fewer KV bytes per token, shorter contexts, a tier for everything not decoding |
+| Engine | near ρ | not full | none | yes | above | Scheduling: prefill chunks stall decodes, or tier copies sit in the critical path | Chunk size, admission, asynchronous copies |
+| Engine | near ρ | not full | none | none | above | The engine runs below its calibrated rates | Re-calibrate on this engine version; the engine itself |
+| None | near ρ | any | any | any | at | At the ceiling | Compare deployments, not stacks |
 
 ## 8. What the ceiling leaves out
 
