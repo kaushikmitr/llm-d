@@ -118,6 +118,10 @@ The figure draws the split for the nine runs of Section 6. Each bar is one sessi
 
 ## 5. How a stack keeps the hit rate up
 
+![where KV can be and how it moves · one index, three moves](figures/fig3-where-kv-can-be.png)
+
+*where KV can be and how it moves · one index, three moves*
+
 A turn's prompt KV is either on the replica that will serve it, somewhere it can be fetched from, or nowhere, in which case it is recomputed. A stack has three moves to make the first case the common one: route the request to the replica that holds its prefix; move the KV, to a host tier when its session pauses or from a peer when it resumes elsewhere; or move the compute, running prefill on a separate pool and shipping the KV once. Each has a price, in transfer time or in load concentrated on one replica, and a router's job is to pay it only when it beats recompute. Eviction is not a move: it is what happens when every tier is full, and the evicted KV's next use pays a full recompute. The three stacks of Section 6 differ in which of these moves they make and how well their index knows where KV is.
 
 ## 6. Empirical evaluation: three stacks on a B200 fleet
