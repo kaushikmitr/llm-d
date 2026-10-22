@@ -63,7 +63,7 @@ r = \frac{\text{HBM bandwidth} / \text{KV bytes per token}}{\text{prefill tokens
 r depends on the hardware and the model only; for Qwen3-Coder-480B on 8 × B200 it is about 3,600. Compute dominates a step when the compute per output token exceeds the memory read per output token, both counted in prefill-token time, with one correction: the weights a step streams count as extra context shared by the n sequences in it, W\_b(n)/(n·b) tokens where b is the KV bytes per token. The rule is
 
 ```latex
-\text{compute dominates the step} \iff \underbrace{1 + \frac{U}{O}}_{\substack{\text{compute per output token:}\\ \text{the decode token plus its share of uncached prefill}}} \;>\; \underbrace{\frac{L + W_b(n)/(n\,b)}{r}}_{\substack{\text{memory per output token:}\\ \text{context plus shared weights, in prefill-token time}}} \qquad \text{otherwise memory dominates}
+\underbrace{1 + \frac{U}{O}}_{\substack{\text{compute per output token:}\\ \text{the decode token plus its share of uncached prefill}}} \;>\; \underbrace{\frac{L + W_b(n)/(n\,b)}{r}}_{\substack{\text{memory per output token:}\\ \text{context plus shared weights, in prefill-token time}}}
 ```
 
 For the agentic workload (L = 117k, U = 7.5k, O = 386), U/O = 19 against a threshold of 50 at the ceiling's batch of 29, so the workload is memory-bound. A stack that lets the hit rate fall raises U/O past the threshold, and its steps are then dominated by recompute. Capacity is not in the rule; it caps n and enters the ceiling as a separate condition (Appendix B).
