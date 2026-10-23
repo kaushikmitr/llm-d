@@ -4,7 +4,7 @@ Oct 20, 2026 · @kaushik mitra · Draft v0.3
 
 ## TL;DR
 
-Evaluating the efficiency of an LLM inference serving system can be reduced to a single ratio. By combining a workload's intrinsic prefix overlap, its mean input and output lengths, and five hardware numbers measured on the deployment (Appendix A), we compute a **roofline**: the most tokens per second the hardware can sustain for that workload. For each load level, the steady-state throughput the system served divided by this ceiling is its **serving efficiency η**.
+Evaluating the efficiency of an LLM inference serving system can be reduced to a single ratio. By combining a workload's intrinsic prefix overlap, its mean input and output lengths, and five hardware numbers measured on the deployment (Appendix A), we compute a **roofline**: the most tokens per second, input plus output, that the hardware can sustain for that workload. For each load level, the steady-state throughput the system served, in the same tokens, divided by this ceiling is its **serving efficiency η**.
 
 The shortfall from the ceiling splits into three factors whose product is η:
 
@@ -154,7 +154,7 @@ A session is live while it has a turn outstanding or is in its tool pause; the r
 
 ### Results summary
 
-| Stack | Sessions | Steady tok/s | η | TTFT median | Hit rate, HBM + host | of which host tier | HBM used | Preemptions / min | HBM bandwidth, % of peak | FP8 compute, % of peak | AI, FLOP/B |
+| Stack | Sessions | Steady tok/s, input + output | η | TTFT median | Hit rate, HBM + host | of which host tier | HBM used | Preemptions / min | HBM bandwidth, % of peak | FP8 compute, % of peak | AI, FLOP/B |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | llm-d | 120 | 604k | 0.46 | 1.2 s | 0.98 | 0.00 | 23% | 0 | 57 | 4 | 36 |
 | llm-d | 180 | 622k | 0.47 | 1.5 s | 0.92 | 0.22 | 43% | 0 | 33 | 10 | 172 |
