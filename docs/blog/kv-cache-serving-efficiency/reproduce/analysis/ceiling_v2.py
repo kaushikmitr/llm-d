@@ -21,16 +21,16 @@ print(f"CEILING all-tokens: n {n}, step {t*1e3:.1f} ms, R {Rg/1e3:.1f}k/GPU, {tp
 F=tps*6
 H={'llm-d 120':(604,.98),'llm-d 180':(622,.92),'llm-d 240':(570,.90),'llm-d 300':(345,.75),'Dynamo 60':(253,.76),'Dynamo 90':(287,.74),'Dynamo 120':(271,.67),'rr 90':(191,.62),'rr 120':(180,.53)}
 print('eta (fleet ceiling):',{k:round(v[0]*1e3/F,2) for k,v in H.items()})
-print('--- split (T_ideal at 0.98, own-I ceilings):')
+print('--- split (T_ideal at 0.98, against the one fleet ceiling, so client*reuse*engine = headline eta):')
 pts=[]
 for r in json.load(open('retention/round2_inputs.json')):
     nm=r['name']; I_,O_,hh,nr,S=r['I'],r['O'],H[nm][1],r['n_run'],r['conc']; rho_=1-(I_+19*1500)/(20*I_)
     Z=r['Tp']+r['gap']; T=r['T_engine']; Tid=O_*step(I_,O_,0.98,nr); Th=O_*step(I_,O_,hh,nr)
     nn,tp,tt=ceiling(I_,O_,rho_); Rr=tp*6
-    client=min(1,S*(I_+O_)/(Z+Tid)/Rr); reuse=min(1.0,(Z+Tid)/(Z+Th)); eng=(Z+Th)/(Z+T)
+    client=min(1,S*(I_+O_)/(Z+Tid)/F); reuse=min(1.0,(Z+Tid)/(Z+Th)); eng=(Z+Th)/(Z+T)
     ideal_n=6*nr/step(I,O,rho,nr)*(I+O)/O
     pts.append((nm,nr,H[nm][0],ideal_n))
-    print(f"{nm:11s} S {S:3d} Z {Z:5.1f} T {T:5.1f} | client {client:.2f} reuse {reuse:.2f} engine {eng:.2f} | eta {client*reuse*eng:.2f} meas {r['tps_gpu']*48/Rr:.2f} | R {Rr/1e6:.2f}M")
+    print(f"{nm:11s} S {S:3d} Z {Z:5.1f} T {T:5.1f} | client {client:.2f} reuse {reuse:.2f} engine {eng:.2f} | eta {client*reuse*eng:.2f} meas {r['tps_gpu']*48/F:.2f} | R_own {Rr/1e6:.2f}M")
 print('--- ideal curve (fleet k tok/s) at h=rho vs n:')
 curve=[(k,round(6*k/step(I,O,rho,k)*(I+O)/O/1e3)) for k in range(1,n+1)]; print(curve)
 for k in range(1,n+1):
