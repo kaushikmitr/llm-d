@@ -20,9 +20,9 @@ On an NVIDIA B200 fleet with a host KV tier, running one agentic coding workload
 
 ## 1. The question
 
-Two serving stacks can run the same model on the same GPUs, serve the same workload and deliver very different throughput. The GPUs are no faster for one than for the other. The difference is how much work each stack repeats and how much of the hardware it leaves idle. Every request brings a prompt. When the stack can reuse that prompt's KV cache from an earlier turn, it skips recomputing those tokens. When it cannot, because the request landed on a replica that does not hold the KV or because the KV was evicted, it spends GPU time on work it could have avoided. Reuse is not the whole story. A stack can keep almost every reusable token and still lose throughput to memory pressure, preemption or slow steps. Telling these losses apart needs a yardstick that does not move with the stack.
+The GPUs are no faster for one stack than for another. The difference is how much work each stack repeats and how much of the hardware it leaves idle. Every request brings a prompt. When the stack can reuse that prompt's KV cache from an earlier turn, it skips recomputing those tokens. When it cannot, it spends GPU time on work it could have avoided. Reuse is not the whole story. A stack can keep almost every reusable token and still lose throughput to memory pressure, preemption or slow steps. Telling these losses apart needs a yardstick that does not move with the stack.
 
-The yardstick is the ratio of the TL;DR: what the stack served, over what its hardware could have served on the same workload, with the shortfall split into the three factors. The post makes two contributions. One is a metric: η and a way to compute its workload-specific ceiling. The other is a diagnosis: the split of the shortfall, read with the engine's counters, says whether the client, routing, retention, capacity or the engine is responsible. The second is the one an operator uses day to day. The B200 results of Section 6 demonstrate both.
+The yardstick is the ratio of the TL;DR. The post makes two contributions. One is a metric: η and a way to compute its workload-specific ceiling. The other is a diagnosis: the split of the shortfall, read with the engine's counters, says whether the client, routing, retention, capacity or the engine is responsible. The second is the one an operator uses day to day. The B200 results of Section 6 demonstrate both.
 
 In this framework, every mechanism a stack adds moves the reuse factor, the engine factor, or the number of sessions the fleet can hold.
 
@@ -36,11 +36,24 @@ The industry has built specialised solutions at three layers of the stack:
 - **Pool topologies.** Prefill/decode disaggregation runs the two phases on different pools and ships the KV once.
 - **Storage layers.** Tiered offload moves KV below the accelerator instead of dropping it. Peer-to-peer sharing pulls it from a neighbour instead of recomputing it.
 
-Seen from the KV cache, these are facets of one placement problem. The question for any of them, alone or combined, is the same: how close does the fleet get to the throughput its hardware allows for this workload?
+Seen from the KV cache, these are facets of one placement problem.
 
 ## 2. Compute or memory: where a run sits on the roofline
 
-An engine serves requests in steps. One step is one forward pass over every request it is working on at that moment, and it takes the longer of its compute time and its memory time. Section 2.1 gives the rule for which of the two it is, for a workload's ceiling and for a run. A run's side can also be read from its arithmetic intensity, computed from the engine's token counters and the model's per-token costs. The chart below places the nine runs of Section 6 that way. The rule uses four numbers, introduced here. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far. Every decode step reads all of it from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U. ρ places the ceiling. A run's measured h places that run.
+An engine serves requests in steps. One step is one forward pass over everything scheduled in it: a chunk of prefill tokens from prompts still being processed, plus one new token for every request that is decoding. A step takes the longer of its compute time and its memory time. This post calls that the step-time law. Section 2.1 gives the rule for which of the two it is, for a workload's ceiling and for a run. A run's side can also be read from its arithmetic intensity, computed from the engine's token counters and the model's per-token costs. The roofline chart below places the nine runs of Section 6 that way. The hit rate enters the rule only through U, the uncached input. ρ places the ceiling. A run's measured h places that run. The symbols used in this post, in one place:
+
+| Symbol | Meaning | Where it comes from |
+| --- | --- | --- |
+| I, O | mean input and output tokens per turn | the trace |
+| ρ | the workload's prefix overlap: the hit rate an oracle with unlimited cache reaches when it replays the whole trace (0.94 here); it builds the ceiling | the trace |
+| h\_oracle | the hit rate the same oracle reaches over the steady window the runs are measured in (0.98 here); it sets the per-run ideal of Section 4 | oracle replay of the window |
+| h | the prefix-cache hit rate a run achieved over the steady window, counting HBM and host-tier hits | engine counters |
+| U | uncached input per turn, (1 − h)·I | h and I |
+| L | resident context per request, prompt plus output so far | the trace |
+| n | batch: the requests decoding together in one step on a replica | engine counters |
+| r | the ridge: the arithmetic intensity at which compute time equals memory time | hardware rates, Section 2.1 |
+| R | the ceiling: tokens per second per accelerator at h = ρ | step-time law, Appendix B |
+| η | achieved tokens per second per accelerator, over R | the load sweep |
 
 ![figure](figures/fig1-measured-roofline.png)
 
@@ -52,7 +65,7 @@ The figure places the nine fleet runs of Section 6 on this chart. The dashed roo
 
 The hit rate decides where a run lands. At a 0.98 hit rate the fleet sits on the memory roof, because nearly all of its steps are decode steps. A decode step reads the weights and the full KV of every decoding request, hundreds of gigabytes, and advances each request by one token. Its FLOPs scale with those few tokens; its bytes do not. Every byte read therefore serves few FLOPs. As the hit rate falls, the same workload moves right and up, across the ridge onto the compute roof. The GPUs get busier and the useful token rate gets lower. The added compute is recomputing contexts the stack failed to reuse.
 
-In this post, compute-bound and memory-bound describe a workload: which resource limits its ceiling, the throughput at hit rate ρ (Section 3). A run is described by which term dominated its steps: left of the ridge memory, right of it compute. For our agentic trace the ceiling is memory-bound. The context is about 117k tokens, and at ρ a turn prefills only about 7k of it. The limit is how much KV the fleet can hold and how fast it can read it. The runs right of the ridge are there because recompute dominated their steps. Section 2.1 gives the rule for which side any workload's ceiling falls on.
+In this post, compute-bound and memory-bound describe a workload: which resource limits its ceiling, the throughput at hit rate ρ (Section 3). A run is described by which term dominated its steps: left of the ridge memory, right of it compute.
 
 ### 2.1 Which side of the ridge a workload falls on
 
@@ -78,7 +91,7 @@ The figure draws the rule for this deployment. For each context length and U/O i
 
 ## 3. The ceiling and η
 
-An inference engine serves requests in steps. One step is one forward pass over everything scheduled in it: a chunk of prefill tokens from prompts still being processed, plus one new token for every request that is decoding. Each step incurs three hardware costs:
+A step, as defined in Section 2, incurs three hardware costs:
 
 1. **Compute.** Every token costs the model's active FLOPs plus attention over its request's context. A prefill chunk is almost all of it.
 2. **Bandwidth.** Every step streams the weights it touches and reads the KV of every decoding request. Its memory time grows with the number and length of resident contexts.
@@ -90,24 +103,9 @@ $$
 \eta = \frac{\text{achieved tokens/s per accelerator}}{R}
 $$
 
-R comes from one rule, called the step-time law in this post. A step takes the longer of its compute time and its memory time. A replica's throughput is the most it can push through while every step stays within compute, bandwidth and HBM capacity (equations in Appendix B).
+R comes from the step-time law. A replica's throughput is the most it can push through while every step stays within compute, bandwidth and HBM capacity (equations in Appendix B).
 
-R is an upper bound by construction. It makes three assumptions. The hit rate is the workload's own ρ, so any reuse the system fails to find, keep or share shows up as a shortfall. Paused sessions' KV is held outside HBM at no cost. Prefill is spread evenly over the steps rather than run in whole chunks. Smaller omissions are listed in Section 8.
-
-The symbols used from here on, in one place:
-
-| Symbol | Meaning | Where it comes from |
-| --- | --- | --- |
-| I, O | mean input and output tokens per turn | the trace |
-| ρ | the workload's prefix overlap: the hit rate an oracle with unlimited cache reaches when it replays the whole trace (0.94 here); it builds the ceiling | the trace |
-| h\_oracle | the hit rate the same oracle reaches over the steady window the runs are measured in (0.98 here); it sets the per-run ideal of Section 4 | oracle replay of the window |
-| h | the prefix-cache hit rate a run achieved over the steady window, counting HBM and host-tier hits | engine counters |
-| U | uncached input per turn, (1 − h)·I | h and I |
-| L | resident context per request, prompt plus output so far | the trace |
-| n | batch: the requests decoding together in one step on a replica | engine counters |
-| r | the ridge: the arithmetic intensity at which compute time equals memory time | hardware rates, Section 2.1 |
-| R | the ceiling: tokens per second per accelerator at h = ρ | step-time law, Appendix B |
-| η | achieved tokens per second per accelerator, over R | the load sweep |
+R is an upper bound by construction. Its definition carries two assumptions. The hit rate is ρ, so any reuse the system fails to find, keep or share shows up as a shortfall. Paused sessions' KV costs nothing while it is out of HBM. A third assumption is that prefill is spread evenly over the steps rather than run in whole chunks. Smaller omissions are listed in Section 8.
 
 ### The ceiling for the B200 fleet
 
@@ -121,7 +119,7 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 
 ## 4. Where the shortfall goes
 
-η judges a system against the hardware. A measured run also reflects its load generator. The decomposition therefore treats the generator as a client whose behaviour is given. It uses only what the client controls and what the system did with it. In a closed loop the client controls two things. One is the number of sessions S it runs. The other is Z, how long each session sits idle between the server finishing a turn and the client sending the next (tool time plus anything else the client does). Neither needs the server to measure. Three per-turn service times enter. T\_ideal is what an engine that loses nothing would take at the hit rate h\_oracle: O decode steps at the step-time law's duration for the run's batch. It is not zero, since output comes one token per step. Three hit rates appear in this post. ρ, 0.94, is the oracle over the whole trace. It counts every conversation's first turn, whose whole prompt is new, and it builds the ceiling. h\_oracle, 0.98, is the same oracle over the steady window alone, where first turns are rare. h is what a stack achieved, measured over that same window. The per-run ideal uses h\_oracle rather than ρ because h and h\_oracle are measured over the same turns. Against ρ, llm-d at 120 sessions, with h = 0.98, would beat the ideal. The ceiling keeps ρ because the workload as a whole includes the first turns. The choice does not move R. This workload is capacity-bound, and R at h\_oracle is within 0.1% of R at ρ. T\_h is the same as T\_ideal at the achieved h. T is the measured one. Such an engine would see each session cycle in Z + T\_ideal. The most this client could get from any server is therefore S(I + O)/(Z + T\_ideal). Little's law then gives η as a product of three factors:
+η judges a system against the hardware. A measured run also reflects its load generator. The decomposition therefore treats the generator as a client whose behaviour is given. It uses only what the client controls and what the system did with it. In a closed loop the client controls two things. One is the number of sessions S it runs. The other is Z, how long each session sits idle between the server finishing a turn and the client sending the next (tool time plus anything else the client does). Neither needs the server to measure. Three per-turn service times enter. T\_ideal is what an engine that loses nothing would take at the hit rate h\_oracle: O decode steps at the step-time law's duration for the run's batch. It is not zero, since output comes one token per step. The ideal uses h\_oracle rather than ρ. h is measured over the steady window, which holds few first turns. ρ counts every conversation's first turn, whose whole prompt is new. Against ρ, llm-d at 120 sessions, with h = 0.98, would beat the ideal. The ceiling keeps ρ because the workload as a whole includes the first turns. The choice does not move R. This workload is capacity-bound, and R at h\_oracle is within 0.1% of R at ρ. T\_h is the same as T\_ideal at the achieved h. T is the measured one. Such an engine would see each session cycle in Z + T\_ideal. The most this client could get from any server is therefore S(I + O)/(Z + T\_ideal). Little's law then gives η as a product of three factors:
 
 - **Client, S(I + O)/(Z + T\_ideal) over R.** How much of the ceiling the client asked for: what its sessions and idle time would get from an engine that loses nothing, at the batch those sessions produce. A property of the load generator, not the system. It is not capped. It exceeds 1 when the client offers more than the ceiling can serve. The product then still equals η, and the wait that even an engine at the ceiling would impose lands in the engine factor. No run in this post reaches 1. The largest is 0.77.
 - **Reuse, (Z + T\_ideal)/(Z + T\_h).** Time lost recomputing prompt tokens, either because the request went to a replica that did not hold their KV or because it had been evicted.
@@ -133,7 +131,7 @@ Two runs of Section 6 show how the factors read. llm-d at 120 sessions: client 0
 
 *nine runs of Section 6 · each bar is client × R, what an engine that loses nothing would serve to that run's sessions; its parts are the achieved throughput (η × R), the engine loss (client × reuse × (1 − engine) × R) and the recompute loss (client × (1 − reuse) × R); the line is the one fleet ceiling R of Section 3 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch at h_oracle = 0.98, T_h the same at the run's h*
 
-The figure draws the split for the nine runs of Section 6. Each bar is what an engine that loses nothing would have served to that run's sessions, client × R. It is cut into what was achieved, which is η, and the two losses, to the engine and to recompute. The ceiling R is the line. Reading down a stack's rows, more sessions lengthen the bar. What the added length turns into is the diagnosis. For llm-d it is throughput until HBM fills, then engine loss. For Dynamo and round-robin it is recompute from the first step. The extra sessions are recomputed rather than served. That is a routing limit, not a load limit. T\_ideal and T\_h are evaluated at the run's own batch, the mean number of requests decoding per replica. Each run is therefore compared with an ideal engine under its own load. Nothing is assumed about how the client should behave. One idealisation shows at small batches. The step-time law spreads prefill evenly over decode steps, so at a small batch recompute hides under the memory time and the reuse factor understates it. Dynamo at 60 sessions is the case: the hit rate is 0.76 but reuse reads 0.95. The engine factor carries it instead. Retention is not one of the factors. It sets where the peak falls, the number of sessions the system can hold before it starts evicting. It is reported beside η as a capacity.
+Reading down a stack's rows in the figure, more sessions lengthen the bar. What the added length turns into is the diagnosis. For llm-d it is throughput until HBM fills, then engine loss. For Dynamo and round-robin it is recompute from the first step. The extra sessions are recomputed rather than served. That is a routing limit, not a load limit. One idealisation shows at small batches. The step-time law spreads prefill evenly over decode steps, so at a small batch recompute hides under the memory time and the reuse factor understates it. Dynamo at 60 sessions is the case: the hit rate is 0.76 but reuse reads 0.95. The engine factor carries it instead. Retention is not one of the factors. It sets where the peak falls, the number of sessions the system can hold before it starts evicting. It is reported beside η as a capacity.
 
 ## 5. How a stack keeps the hit rate up
 
@@ -193,8 +191,6 @@ A session is live while it has a turn outstanding or is in its tool pause. The r
 
 *B200 fleet experiment · steady-window throughput, mean HBM KV occupancy per replica and preemptions from engine counters · 9 runs, 3 stacks*
 
-The second figure shows the resource that sets llm-d's peak. Its throughput rises to 180 sessions and falls after. The lower panel shows why. HBM occupancy climbs from 23% to 85% as sessions are added. From 240 sessions the engine preempts running requests to make room. Dynamo and round-robin peak while HBM is about a quarter full, so capacity is not what limits them.
-
 ### Key takeaways
 
 - **The knee is HBM capacity for the sessions being decoded.** llm-d keeps the hit rate at the workload's level up to 240 sessions, with the host tier supplying up to two thirds of the hits. Past 180 sessions the KV of the requests decoding at once fills HBM and the engine starts preempting. A preempted request is restored from the host tier rather than recomputed. But it waits for a slot and for the copy, so turns get longer and throughput falls while the hit rate holds.
@@ -211,7 +207,7 @@ Per-replica throughput stayed within about 10% of each level's mean. The excepti
 
 ## 7. Doing this for your own workload
 
-The procedure is four steps: characterise the trace (I, O and ρ from an oracle replay), calibrate the deployment (two jobs on one replica), compute R, then sweep the load and split the shortfall. Each step is one script in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce), whose README walks through them. Section 6 is the procedure applied once. The split of Section 4 gives three factors, client, reuse and engine, whose product is η. The factor below one says where the loss is. The counters recorded in the sweep say why. The table pairs each factor with the counter pattern that points to a cause and a lever. Read its rows as hypotheses to test, not as a one-to-one map from factor to cause. Read the row for each factor that is below one. A run can match more than one.
+The procedure is four steps: characterise the trace (I, O and ρ from an oracle replay), calibrate the deployment (two jobs on one replica), compute R, then sweep the load and split the shortfall. Each step is one script in the [reproduction kit](https://github.com/kaushikmitr/llm-d/tree/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/reproduce), whose README walks through them. Section 6 is the procedure applied once. The factor below one says where the loss is. The counters recorded in the sweep say why. The table pairs each factor with the counter pattern that points to a cause and a lever. Read the row for each factor below one as a hypothesis to test, not as a verdict. A run can match more than one.
 
 | Factor below 1 | Hit rate vs ρ | HBM occupancy | Preemptions | Requests waiting | Step time vs the law | Cause | Lever |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -235,7 +231,7 @@ The ceiling is a first-order bound on purpose. It keeps the terms that decide wh
 | Steps assumed evenly mixed; an engine that fills each step with an 8k prefill chunk stalls its decodes for 220 to 310 ms | Not a ceiling term by design: it is an engine property | Caps the fleet at about 19k tokens per second per GPU, 0.69 of the ceiling; it appears in the engine factor of Section 6, not in R |
 | KV of paused sessions assumed held outside HBM at no cost | Too high for a fleet with HBM alone; right once a host tier holds them, as on this fleet | First-order for llm-d's knee: with paused sessions in the host tier, HBM fills with the sessions being decoded, from about 18 per replica against the ceiling's 29, because the engine also holds the chunked prefill of waiting requests and the KV it is copying in |
 
-None of these changes the order of the stacks or the hit-rate finding. They limit how far the 0.47 could move. Only the last matters at first order.
+None of these changes the order of the stacks or the hit-rate finding. They limit how far the 0.47 could move.
 
 ## 9. Conclusion
 
