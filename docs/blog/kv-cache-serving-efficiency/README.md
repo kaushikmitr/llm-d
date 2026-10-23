@@ -38,7 +38,7 @@ Seen from the KV cache, these are facets of one placement problem. The question 
 
 ## 2. Compute or memory: where a run sits on the roofline
 
-Section 2.1 gives the rule for whether compute or memory sets the step time, for a workload's ceiling and for a run. It uses four numbers, introduced here. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens, token-weighted, that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far. Every decode step reads all of it from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U. ρ places the ceiling. A run's measured h places that run.
+An engine serves requests in steps. One step is one forward pass over every request it is working on at that moment, and it takes the longer of its compute time and its memory time. Section 2.1 gives the rule for which of the two it is, for a workload's ceiling and for a run. The rule uses four numbers, introduced here. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens, token-weighted, that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far. Every decode step reads all of it from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U. ρ places the ceiling. A run's measured h places that run.
 
 ![figure](figures/fig1-measured-roofline.png)
 
