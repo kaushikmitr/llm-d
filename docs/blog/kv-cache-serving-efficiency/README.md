@@ -100,7 +100,7 @@ A step, as defined in Section 2, incurs three hardware costs:
 2. **Bandwidth.** Every step streams the weights it touches and reads the KV of every decoding request. Its memory time grows with the number and length of resident contexts.
 3. **Capacity.** Every request whose KV is held, decoding or waiting for its next turn, occupies HBM. When HBM is full something is evicted. Unless a lower tier still holds it, it must be recomputed when it returns.
 
-Serving efficiency η is one number per workload and hardware: the tokens per second per accelerator a system achieved, divided by the ceiling R. R is the tokens per second the same accelerators could sustain with every reusable prefix token reused (h = ρ) and with KV in HBM only while its request was decoding. Tokens are input plus output. A cached prompt token counts as served just as a recomputed one does. What differs is what it cost. How much a system serves depends on load. η is therefore taken at the peak of a sweep: steady-state throughput at each of several offered loads, the highest divided by R.
+Serving efficiency η is one number per run: the steady-state tokens per second per accelerator a system achieved at one offered load, divided by the ceiling R. R is the tokens per second the same accelerators could sustain with every reusable prefix token reused (h = ρ) and with KV in HBM only while its request was decoding. Tokens are input plus output. A cached prompt token counts as served just as a recomputed one does. What differs is what it cost. How much a system serves depends on load. A stack's headline η is therefore the highest over a sweep of offered loads, and the runs below the peak are reported beside it.
 
 $$
 \eta = \frac{\text{achieved tokens/s per accelerator}}{R}
