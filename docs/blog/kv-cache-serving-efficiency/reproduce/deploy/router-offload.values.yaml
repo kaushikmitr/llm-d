@@ -1,0 +1,63 @@
+router:
+  epp:
+    flags:
+      v: 2
+      metrics-endpoint-auth: false
+    pluginsConfigFile: agentic-b200-plugins.yaml
+    pluginsCustomConfig:
+      agentic-b200-plugins.yaml: "apiVersion: llm-d.ai/v1alpha1\nkind: EndpointPickerConfig\n\
+        plugins:\n- type: token-load-scorer\n- type: inflight-load-producer\n- type:\
+        \ approx-prefix-cache-producer\n  parameters:\n    maxPrefixTokensToMatch:\
+        \ 262144\n    autoTune: false\n    blockSizeTokens: 64\n    lruCapacityPerServer:\
+        \ 96750\n- type: prefix-cache-affinity-filter\n  parameters:\n    peakPrefillThroughput:\
+        \ 37217\nschedulingProfiles:\n- name: default\n  plugins:\n  - pluginRef:\
+        \ prefix-cache-affinity-filter\n  - pluginRef: token-load-scorer\n"
+    replicas: 1
+    resources:
+      limits:
+        memory: 16Gi
+      requests:
+        cpu: '4'
+        memory: 8Gi
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker
+      tag: main@sha256:cf1b807e794b7fafcbdc44855e0fe040fa8ea37905e9f9240e530f7f0e70e109
+      pullPolicy: IfNotPresent
+  extraServicePorts:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: 8081
+  inferencePool:
+    failureMode: FailOpen
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: agentic-b200
+    protocol: http
+  proxy:
+    args:
+    - --service-node
+    - envoy-sidecar
+    - --log-level
+    - warn
+    - --concurrency
+    - '8'
+    - --drain-strategy
+    - immediate
+    - --drain-time-s
+    - '60'
+    - -c
+    - /etc/envoy/envoy.yaml
+    proxyType: envoy
+    resources:
+      limits:
+        memory: 16Gi
+      requests:
+        cpu: '4'
+        memory: 8Gi
+  tracing:
+    otelExporterEndpoint: http://localhost:4317
+    sampling:
+      sampler: parentbased_traceidratio
+      samplerArg: '0.1'

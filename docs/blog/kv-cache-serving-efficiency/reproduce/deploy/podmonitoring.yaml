@@ -1,0 +1,28 @@
+# Google Managed Prometheus scrape configs for the kv-fleet benchmark stack.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata: {name: llmd-vllm, namespace: kv-fleet}
+spec:
+  selector: {matchLabels: {llm-d.ai/role: decode}}
+  endpoints: [{port: modelserver, path: /metrics, interval: 15s}]
+---
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata: {name: dynamo-workers, namespace: kv-fleet}
+spec:
+  selector: {matchLabels: {app: dynamo-decode}}
+  endpoints: [{port: system, path: /metrics, interval: 15s}]
+---
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata: {name: dynamo-frontend, namespace: kv-fleet}
+spec:
+  selector: {matchLabels: {app: dynamo-frontend}}
+  endpoints: [{port: 8000, path: /metrics, interval: 15s}]
+---
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata: {name: llmd-router, namespace: kv-fleet}
+spec:
+  selector: {matchLabels: {llm-d-router-gateway: agentic-b200-epp}}
+  endpoints: [{port: metrics, path: /metrics, interval: 15s}]

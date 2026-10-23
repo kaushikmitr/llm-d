@@ -1,0 +1,64 @@
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata: {name: gpu-x8, namespace: kv-fleet}
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly: {deviceClassName: gpu.nvidia.com, count: 8}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: decode, namespace: kv-fleet, labels: {llm-d.ai/guide: agentic-b200, llm-d.ai/role: decode}}
+spec:
+  replicas: 6
+  strategy: {type: Recreate}
+  selector: {matchLabels: {llm-d.ai/guide: agentic-b200, llm-d.ai/role: decode}}
+  template:
+    metadata: {labels: {llm-d.ai/guide: agentic-b200, llm-d.ai/role: decode, llm-d.ai/model: qwen3-coder-480b}}
+    spec:
+      nodeSelector: {cloud.google.com/gke-nodepool: b200-p2p-pool-1}
+      tolerations:
+      - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+      - {key: cloud.google.com/gke-spot, operator: Exists, effect: NoSchedule}
+      resourceClaims:
+      - {name: gpus, resourceClaimTemplateName: gpu-x8}
+      containers:
+      - name: modelserver
+        image: vllm/vllm-openai:v0.28.0
+        command: ["/bin/bash", "-c", "find /dev/shm -type f -delete; python3 /patch/vllm_pin_backport.py || exit 1; exec vllm serve \"$@\"", "--"]
+        args: ["Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8", "--port=8000", "--tensor-parallel-size=8", "--enable-expert-parallel", "--max-model-len=262144", "--max-num-batched-tokens=8192", "--max-num-seqs=64", "--gpu-memory-utilization=0.9", "--block-size=64", "--disable-access-log-for-endpoints=/health,/metrics,/v1/models", "--kv-transfer-config={\"kv_connector\":\"OffloadingConnector\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"cpu_bytes_to_use\":1610612736000}}"]
+        env:
+        - {name: HF_TOKEN, valueFrom: {secretKeyRef: {name: llm-d-hf-token, key: HF_TOKEN}}}
+        - {name: HF_HOME, value: /root/.cache/huggingface}
+        - {name: HF_HUB_DISABLE_XET, value: "1"}
+        - {name: DO_NOT_TRACK, value: "1"}
+        - {name: VLLM_SERVER_DEV_MODE, value: "1"}
+        ports: [{containerPort: 8000, name: modelserver}]
+        resources:
+          claims: [{name: gpus}]
+          limits: {cpu: "96", memory: 3300Gi}
+          requests: {cpu: "64", memory: 2900Gi}
+        readinessProbe: {httpGet: {path: /health, port: 8000}, initialDelaySeconds: 60, periodSeconds: 15, failureThreshold: 600}
+        volumeMounts:
+        - {name: shm, mountPath: /dev/shm}
+        - {name: pin-backport, mountPath: /patch}
+        - {name: hf-cache, mountPath: /root/.cache/huggingface}
+        - {name: cache, mountPath: /.cache}
+        - {name: triton, mountPath: /.triton}
+        - {name: cfg, mountPath: /.config}
+      volumes:
+      - {name: shm, emptyDir: {medium: Memory, sizeLimit: 1600Gi}}
+      - {name: pin-backport, configMap: {name: vllm-pin-backport}}
+      - {name: hf-cache, hostPath: {path: /var/cache/huggingface, type: DirectoryOrCreate}}
+      - {name: cache, emptyDir: {}}
+      - {name: triton, emptyDir: {}}
+      - {name: cfg, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: decode-rr, namespace: kv-fleet}
+spec:
+  selector: {llm-d.ai/guide: agentic-b200, llm-d.ai/role: decode}
+  ports: [{name: http, port: 8000, targetPort: 8000}]

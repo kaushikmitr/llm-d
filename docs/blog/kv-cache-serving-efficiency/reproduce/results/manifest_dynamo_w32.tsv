@@ -1,0 +1,4 @@
+conversations	num_requests	seed	status	exit	result_dir	t0	t1	ttft_med_s	engine_hit	steady_tps	collapsed
+60	1200	3067	DONE	0	results/b200_fleet_offload/dynamo_w32/conc_60	1792477482	1792478455	1.64	0.683	253452	0
+90	1800	3097	DONE	0	results/b200_fleet_offload/dynamo_w32/conc_90	1792478502	1792479643	2.13	0.557	286924	0
+120	2400	3127	DONE	0	results/b200_fleet_offload/dynamo_w32/conc_120	1792479742	1792481300	3.33	0.460	271471	0
