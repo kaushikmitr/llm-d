@@ -1,4 +1,4 @@
-# KV Cache Is the Problem: A Framework for LLM Inference Serving
+# The KV Cache-Miss Tax: Quantifying Efficiency in LLM Inference Serving
 
 Oct 23, 2026 · @kaushik mitra · Draft v0.4
 
