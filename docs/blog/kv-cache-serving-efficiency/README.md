@@ -110,11 +110,11 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 - **Reuse, (Z + T\_ideal)/(Z + T\_h).** Time lost recomputing prompt tokens, either because the request went to a replica that did not hold their KV or because it had been evicted.
 - **Engine, (Z + T\_h)/(Z + T).** Everything else the engine lost at the hit rate it had.
 
-![nine runs of Section 6 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch with full reuse, T_h the same at the run's hit rate · η at each run's own I and O](figures/fig3b-turn-cycle-split.png)
+![nine runs of Section 6 · factors from the split table of Section 6, each run against the ceiling at its own mean prompt length · the four parts are R·c·r·e, R·c·r(1 − e), R·c(1 − r) and R(1 − c), which add up to R](figures/fig3c-ceiling-split.png)
 
-*nine runs of Section 6 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch with full reuse, T_h the same at the run's hit rate · η at each run's own I and O*
+*nine runs of Section 6 · factors from the split table of Section 6, each run against the ceiling at its own mean prompt length · the four parts are R·c·r·e, R·c·r(1 − e), R·c(1 − r) and R(1 − c), which add up to R*
 
-The figure draws the split for the nine runs of Section 6. Each bar is one session's turn cycle: the idle time Z is the client's, the first service segment is what an ideal engine would take, and the two loss segments are what the reuse and engine factors measure. T\_ideal and T\_h are evaluated at the run's own batch, the mean number of requests decoding per replica, so each run is compared with an ideal engine under its own load; nothing is assumed about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity.
+The figure draws the split for the nine runs of Section 6. Each bar is one run's ceiling R, cut into what was achieved, which is η, and the three losses: to the engine, to recompute, and to load the client did not ask for, which at a stack's peak is load the stack could not absorb. T\_ideal and T\_h are evaluated at the run's own batch, the mean number of requests decoding per replica, so each run is compared with an ideal engine under its own load; nothing is assumed about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity.
 
 ## 5. How a stack keeps the hit rate up
 
