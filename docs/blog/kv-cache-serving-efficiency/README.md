@@ -54,6 +54,8 @@ An engine serves requests in steps. One step is one forward pass over everything
 | R | the ceiling: tokens per second per accelerator at h = ρ | step-time law, Appendix B |
 | η | achieved tokens per second per accelerator, over R | the load sweep |
 
+The intuition first. In every step a GPU does two things: it reads bytes from HBM and it does arithmetic on them. A decode step for a long context reads a lot, the weights and every resident context's KV, hundreds of gigabytes, and computes little, one token per request. It waits on memory. A prefill step computes a lot per byte it reads. It waits on compute. The roofline chart is the standard picture of which of the two a step waited on. The rest of this section applies it to a serving fleet, where the hit rate decides how much prefill each step carries.
+
 ![figure](figures/fig1-measured-roofline.png)
 
 *Section 6 runs on the B200 fleet · FLOPs and bytes derived from sampled engine counters and the model shape (Appendix A); tokens restored from the host tier are not counted as recomputed · roofs as measured on one replica: 1.22 PFLOP/s per GPU (27% of the 4.5 dense FP8 datasheet peak) and 4.2 TB/s (53% of 8) · 9 runs, 3 stacks*
@@ -62,7 +64,7 @@ A roofline chart places a run by two numbers. The x axis is its arithmetic inten
 
 The figure places the nine fleet runs of Section 6 on this chart. The dashed roof is the B200 datasheet. The solid roof is what this deployment was measured to reach (Appendix A). The measured roofs meet at about 290 FLOP/B.
 
-The hit rate decides where a run lands. At a 0.98 hit rate the fleet sits on the memory roof, because nearly all of its steps are decode steps. A decode step reads the weights and the full KV of every decoding request, hundreds of gigabytes, and advances each request by one token. Its FLOPs scale with those few tokens; its bytes do not. Every byte read therefore serves few FLOPs. As the hit rate falls, the same workload moves right and up, across the ridge onto the compute roof. The GPUs get busier and the useful token rate gets lower. The added compute is recomputing contexts the stack failed to reuse.
+The hit rate decides where a run lands. At a 0.98 hit rate the fleet sits on the memory roof, because nearly all of its steps are decode steps. As the hit rate falls, the same workload moves right and up, across the ridge onto the compute roof. The GPUs get busier and the useful token rate gets lower. The added compute is recomputing contexts the stack failed to reuse.
 
 In this post, compute-bound and memory-bound describe a workload: which resource limits its ceiling, the throughput at hit rate ρ (Section 3). A run is described by which term dominated its steps: left of the ridge memory, right of it compute.
 
@@ -130,7 +132,7 @@ Two runs of Section 6 show how the factors read. llm-d at 120 sessions: client 0
 
 *nine runs of Section 6 · each bar is client × R, what an engine that loses nothing would serve to that run's sessions; its parts are the achieved throughput (η × R), the engine loss (client × reuse × (1 − engine) × R) and the recompute loss (client × (1 − reuse) × R); the line is the one fleet ceiling R of Section 3 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch at the window oracle's 0.98, T_h the same at the run's h*
 
-Reading down a stack's rows in the figure, more sessions lengthen the bar. What the added length turns into is the diagnosis. For llm-d it is throughput until HBM fills, then engine loss. For Dynamo and round-robin it is recompute from the first step. The extra sessions are recomputed rather than served. That is a routing limit, not a load limit. One idealisation shows at small batches. The step-time law spreads prefill evenly over decode steps, so at a small batch recompute hides under the memory time and the reuse factor understates it. Dynamo at 60 sessions is the case: the hit rate is 0.76 but reuse reads 0.95. The engine factor carries it instead. Retention is not one of the factors. It sets where the peak falls, the number of sessions the system can hold before it starts evicting. It is reported beside η as a capacity.
+Reading down a stack's rows in the figure, more sessions lengthen the bar. What the added length turns into is the diagnosis. For llm-d it is throughput until HBM fills, then engine loss. For Dynamo and round-robin it is recompute from the first step. The extra sessions are recomputed rather than served. That is a routing limit, not a load limit. One limit of the attribution shows at small batches. The step-time law spreads prefill evenly over decode steps. At a small batch the recompute then hides under the memory time, and the reuse factor understates it. The loss lands in the engine factor instead. Dynamo at 60 sessions is the case: the hit rate is 0.76, but reuse reads 0.95 and engine 0.77. A low engine factor at a small batch should therefore be read with the hit rate beside it. Section 7 has the row. Retention is not one of the factors. It sets where the peak falls, the number of sessions the system can hold before it starts evicting. It is reported beside η as a capacity.
 
 ## 5. How a stack keeps the hit rate up
 
@@ -213,6 +215,7 @@ The procedure is four steps: characterise the trace (I, O and ρ from an oracle 
 | Client | any | any | any | any | any | Sessions idle beyond their tool pause, or too few sessions offered | The load generator, not the stack; fix it before concluding anything |
 | Reuse | below ρ from the lightest load | not full | none | any | any | Routing: turns land on replicas that do not hold their context, or the index does not see a tier | The index and the affinity rule, before buying memory |
 | Reuse | near ρ at light load, falls as sessions are added | filling | any | any | any | Retention: paused sessions' KV is evicted | A host tier, or fewer sessions per replica |
+| Engine | below ρ | not full | none | few | above | Recompute at a small batch: the step-time law spreads prefill under the memory time, so the loss lands in the engine factor rather than reuse (Dynamo at 60 sessions, Section 4) | Treat it as a reuse loss: the index and the affinity rule |
 | Engine | near ρ | near full | yes | yes | above | Capacity: the decoding sessions' KV fills HBM | Fewer KV bytes per token, shorter contexts, a tier for everything not decoding |
 | Engine | near ρ | not full | none | yes | above | Scheduling: prefill chunks stall decodes, or tier copies sit in the critical path | Chunk size, admission, asynchronous copies |
 | Engine | near ρ | not full | none | none | above | The engine runs below its calibrated rates | Re-calibrate on this engine version; the engine itself |
