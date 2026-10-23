@@ -14,6 +14,10 @@ The shortfall from the ceiling splits into three factors whose product is η:
 
 Separately, a run's arithmetic intensity, computed from the engine's token counters and the model's per-token costs, shows whether compute or memory dominated its steps. On an NVIDIA B200 fleet with a host KV tier, running an agentic coding workload, **llm-d** reaches 0.47 of the ceiling, **NVIDIA Dynamo** 0.22 and **round-robin** 0.14. The prefix hit rate each stack kept sets the ranking: llm-d keeps it at 0.90 or above until HBM fills with the sessions it is decoding, at 240 sessions; Dynamo and round-robin are at 0.76 and 0.62 at their lightest loads, with HBM a quarter full. The framework is for infrastructure engineers building or selecting serving stacks and for vendors who want standardised performance claims.
 
+![B200 fleet experiment, cluster106, 20 October 2026 · peak over each stack's load ladder (Section 6) · all three stacks in their documented default configuration, untuned](figures/fig0-eta-peaks.png)
+
+*B200 fleet experiment, cluster106, 20 October 2026 · peak over each stack's load ladder (Section 6) · all three stacks in their documented default configuration, untuned*
+
 ## 1. The question
 
 This post argues that the performance of any LLM serving system can be captured by one efficiency ratio, obtained in three steps:
@@ -63,7 +67,7 @@ $$
 r depends on the hardware and the model only; for Qwen3-Coder-480B on 8 × B200, at this workload's 117k context, it is about 5,800. Compute dominates a step when the compute per output token exceeds the memory read per output token, both counted in prefill-token time, with one correction: the weights a step streams count as extra context shared by the n sequences in it, W\_b(n)/(n·b) tokens where b is the KV bytes per token. The rule is
 
 $$
-\underbrace{1 + \frac{U}{O}}_{\substack{\text{compute per output token:}\\ \text{the decode token plus its share of uncached prefill}}} \;>\; \underbrace{\frac{L + W_b(n)/(n\,b)}{r}}_{\substack{\text{memory per output token:}\\ \text{context plus shared weights, in prefill-token time}}}
+\frac{U}{O} > \frac{L + W_b(n)/(n\,b)}{r} - 1
 $$
 
 For the agentic workload (L = 117k, U = 7.5k, O = 386), U/O = 19 against a threshold of 30 at the ceiling's batch of 29, so the workload is memory-bound. A stack that lets the hit rate fall raises U/O past the threshold, and its steps are then dominated by recompute. Capacity is not in the rule; it caps n and enters the ceiling as a separate condition (Appendix B).
