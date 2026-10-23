@@ -100,7 +100,7 @@ On the B200 deployment calibrated in Appendix A, the agentic workload (I = 117k,
 
 *ideal curve from the step-time law of Appendix B at h = ρ for the B200 fleet of Appendix A; measured points from the nine runs of Section 6, at the mean number of requests decoding per replica over the steady window*
 
-The measured runs show how far each stack climbed the line. llm-d at 120 sessions sits on it with six decoding; at 180 and 240 it ran twelve and eighteen but fell below the line as the engine's steps lengthened with chunked prefill, host-tier copies and then preemption. Dynamo and round-robin never pass twelve decoding, because their lost reuse turns added sessions into recompute. Section 6 splits these gaps into their factors.
+The measured runs show how far each stack climbed the line. llm-d at 120 sessions sits on it with six decoding; at 180 and 240 it ran twelve and eighteen but fell below the line as the engine's steps lengthened with chunked prefill, host-tier copies and then preemption. Dynamo and round-robin never pass twelve decoding, because their lost reuse turns added sessions into recompute. Section 4 splits these gaps into their factors.
 
 ## 4. Where the shortfall goes
 
@@ -110,11 +110,11 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 - **Reuse, (Z + T\_ideal)/(Z + T\_h).** Time lost recomputing prompt tokens, either because the request went to a replica that did not hold their KV or because it had been evicted.
 - **Engine, (Z + T\_h)/(Z + T).** Everything else the engine lost at the hit rate it had.
 
-![nine runs of Section 6 · factors from the split table of Section 6, each run against the ceiling at its own mean prompt length · the four parts are R·c·r·e, R·c·r(1 − e), R·c(1 − r) and R(1 − c), which add up to R](figures/fig3c-ceiling-split.png)
+![nine runs of Section 6 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch with the window oracle's hit rate of 0.98, T_h the same at the run's hit rate; each run against the ceiling at its own mean prompt length, so η differs slightly from the Section 6 table · the four parts are R·c·r·e, R·c·r(1 − e), R·c(1 − r) and R(1 − c), which add up to R](figures/fig3c-ceiling-split.png)
 
-*nine runs of Section 6 · factors from the split table of Section 6, each run against the ceiling at its own mean prompt length · the four parts are R·c·r·e, R·c·r(1 − e), R·c(1 − r) and R(1 − c), which add up to R*
+*nine runs of Section 6 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch with the window oracle's hit rate of 0.98, T_h the same at the run's hit rate; each run against the ceiling at its own mean prompt length, so η differs slightly from the Section 6 table · the four parts are R·c·r·e, R·c·r(1 − e), R·c(1 − r) and R(1 − c), which add up to R*
 
-The figure draws the split for the nine runs of Section 6. Each bar is one run's ceiling R, cut into what was achieved, which is η, and the three losses: to the engine, to recompute, and to load the client did not ask for, which at a stack's peak is load the stack could not absorb. T\_ideal and T\_h are evaluated at the run's own batch, the mean number of requests decoding per replica, so each run is compared with an ideal engine under its own load; nothing is assumed about how the client should behave. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity.
+The figure draws the split for the nine runs of Section 6. Each bar is one run's ceiling R, cut into what was achieved, which is η, and the three losses: to the engine, to recompute, and to load the client did not ask for, which at a stack's peak is load the stack could not absorb. T\_ideal and T\_h are evaluated at the run's own batch, the mean number of requests decoding per replica, so each run is compared with an ideal engine under its own load; nothing is assumed about how the client should behave. One idealisation shows at small batches: the step-time law spreads prefill evenly over decode steps, so at a small batch recompute hides under the memory time and the reuse factor understates it, as for Dynamo at 60 sessions, where the hit rate is 0.76 but reuse reads 0.95; the engine factor carries it instead. Retention is not one of the factors: it sets where the peak falls, the number of sessions the system can hold before it starts evicting, and is reported beside η as a capacity.
 
 ## 5. How a stack keeps the hit rate up
 
@@ -184,29 +184,11 @@ The second figure shows the resource that sets llm-d's peak. Its throughput rise
 
 - **The knee is HBM capacity for the sessions being decoded.** llm-d keeps the hit rate at the workload's level, 0.98 to 0.90, from 120 to 240 sessions, with the host tier supplying up to two thirds of the hits. Past 180 sessions the KV of the requests decoding at once fills HBM: at 240, 18 run per replica, HBM averages 65% and the engine starts preempting; at 300, with HBM at 85% and 21 running, preemptions reach 6.6 a minute and median time to first token is 36 s. A preempted request is restored from the host tier rather than recomputed, but it waits for a slot and for the copy, so turns get longer and throughput falls while the hit rate holds.
 - **The hit rate explains the ranking.** Dynamo's router kept 0.76 to 0.67 and round-robin 0.62 to 0.53, against the 0.98 an oracle reaches over the same window, and both peak with HBM about a quarter full and no preemptions. Their shortfall is routing: a turn lands on a replica that holds none of its context in either tier, and the prompt is recomputed. Dynamo ran with default routing weights and the stock frontend, as a user following its documentation would deploy it, and neither stack was tuned beyond llm-d's documented prefill-rate calibration.
-- **The arithmetic intensity follows the hit rate.** With the hit rate near ρ the fleet sits on the bandwidth side of the ridge (57% of HBM bandwidth and 4% of compute for llm-d at 120 sessions); as the hit rate falls, recompute carries every stack toward and across the measured ridge of about 290 FLOP/B (Dynamo at 120 sessions 600, round-robin at 120 sessions 549, llm-d at 300 sessions 737), where the GPUs are busier and the useful token rate is lower.
+- **The arithmetic intensity follows the hit rate.** With the hit rate near ρ the fleet sits on the bandwidth side of the ridge (57% of HBM bandwidth and 4% of compute for llm-d at 120 sessions); as the hit rate falls, recompute carries every stack toward and across the measured ridge of about 290 FLOP/B (Dynamo at 120 sessions 600, round-robin at 120 sessions 549, llm-d at 300 sessions 737), where the GPUs are busier and the useful token rate is lower. The rule of Section 2.1, applied to each run's measured hit rate, context and batch size, puts eight of the nine runs on the same side of that ridge as their arithmetic intensity; the ninth, Dynamo at 90 sessions, sits at 283 FLOP/B, within 3% of it. Both use the same per-token costs, so this is a consistency check, not an independent measurement.
 
 ### The load the harness delivered
 
 inference-perf's conversation replay (v0.7.0) advances conversations in lockstep when used as documented, so the runs set the concurrency to four times the number of conversations, run 20 turns per conversation and use 32 worker processes; the engines still never see more than one request per conversation. With that, the harness kept 86 to 92% of the configured sessions in flight, with 4 to 7 s of idle time per turn beyond the tool pause at the peaks and 13 s at the collapsed levels; the decomposition carries this as the client factor, so the ranking does not depend on it. The upstream fix, one closed loop per conversation that records its own idle time, would make the workaround unnecessary.
-
-### Where the loss is
-
-Three factors per run, as defined in Section 4. Z is the time from a turn's last token to the session's next request, and T the time from a request's start to its last token, both from the per-request records. Each run is scored against the ceiling at its own mean prompt length, so η here differs slightly from the headline table. T\_ideal is taken at the oracle's hit rate over the steady window, 0.98, since h is measured over that window.
-
-| Stack | Sessions | Hit rate | Z, idle per turn | T, service per turn | Client | Reuse | Engine | η |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| llm-d | 120 | 0.98 | 17.5 s | 8.9 s | 0.52 | 1.00 | 0.96 | 0.50 |
-| llm-d | 180 | 0.92 | 16.4 s | 22.4 s | 0.69 | 1.00 | 0.68 | 0.47 |
-| llm-d | 240 | 0.90 | 20.0 s | 34.3 s | 0.75 | 1.00 | 0.61 | 0.45 |
-| llm-d | 300 | 0.75 | 26.8 s | 95.0 s | 0.79 | 0.69 | 0.49 | 0.26 |
-| Dynamo KV router | 60 | 0.76 | 16.8 s | 15.2 s | 0.29 | 0.95 | 0.77 | 0.21 |
-| Dynamo KV router | 90 | 0.74 | 16.0 s | 21.1 s | 0.35 | 0.92 | 0.70 | 0.23 |
-| Dynamo KV router | 120 | 0.67 | 21.0 s | 36.2 s | 0.39 | 0.73 | 0.74 | 0.21 |
-| round-robin Service | 90 | 0.62 | 19.8 s | 34.0 s | 0.29 | 0.81 | 0.64 | 0.15 |
-| round-robin Service | 120 | 0.53 | 27.6 s | 55.9 s | 0.32 | 0.67 | 0.66 | 0.14 |
-
-The split reads this way. The client factor is the load's own: at llm-d's peak the sessions and their idle time asked for 0.69 of the ceiling. Within that, llm-d lost nothing to reuse up to 240 sessions and 32 to 39% to the engine, the time requests spend waiting to be scheduled and, past 240, preempted; at 300 it also lost 31% to reuse. Dynamo and round-robin peak at lower loads, so their client factor is 0.29 to 0.39; past their peaks, added sessions turn into recompute (reuse 0.92 to 0.67) while the engine factor stays at 0.64 to 0.77. One idealisation of Section 3 shows in the table: the step-time law spreads prefill evenly across decode steps, so at a small batch recompute hides under the memory time and the reuse factor understates it, as for Dynamo at 60 sessions (hit rate 0.76, reuse 0.95); the engine factor carries it instead. At 120 sessions llm-d's 0.98 is the oracle's own hit rate over the window, so its reuse is 1.00. The rule of Section 2.1, applied to each run's measured hit rate, context and batch size, puts eight of the nine runs on the same side of the measured ridge (about 290 FLOP/B, where the solid roofs of the Section 2 figure meet) as their arithmetic intensity; the ninth, Dynamo at 90 sessions, sits at 283 FLOP/B, within 3% of the ridge. Both use the same per-token costs, so this shows the two are consistent; it is not an independent measurement.
 
 ### Run notes
 
