@@ -52,7 +52,7 @@ An engine serves requests in steps. One step is one forward pass over everything
 | U | uncached input per turn, (1 − h)·I | h and I |
 | L | resident context per request, prompt plus output so far | the trace |
 | n | batch: the requests decoding together in one step on a replica | engine counters |
-| r | the ridge: the arithmetic intensity at which compute time equals memory time | hardware rates, Section 2.1 |
+| r | the ridge in token units: the KV tokens read in the time one prefill token is computed, at the calibration context; the chart's FLOP/B ridge is the same crossing in other units | hardware rates, Section 2.1 |
 | R | the ceiling: tokens per second per accelerator at h = ρ | step-time law, Appendix B |
 | η | achieved tokens per second per accelerator, over R | the load sweep |
 
@@ -72,13 +72,13 @@ In this post, compute-bound and memory-bound describe a workload: which resource
 
 ### 2.1 Which side of the ridge a workload falls on
 
-Each output token costs the engine two things. One is a read of its whole context, L tokens of KV. The other is the compute for its share of the uncached prompt, U/O prefill tokens. The **ridge** r is the exchange rate between them: the number of KV tokens the device reads in the time it prefills one token, from the two calibrated rates:
+Each output token costs the engine two things. One is a read of its whole context, L tokens of KV. The other is the compute for its share of the uncached prompt, U/O prefill tokens. The **ridge** of Section 2, written in token units as r, is the exchange rate between them: the number of KV tokens the device reads in the time it prefills one token. It comes from the two calibrated rates:
 
 $$
 r = \frac{\text{HBM bandwidth} / \text{KV bytes per token}}{\text{prefill tokens per second}}
 $$
 
-r depends on the hardware and the model only. For Qwen3-Coder-480B on 8 × B200, at this workload's 117k context, it is about 5,800. Compute dominates a step when the compute per output token exceeds the memory read per output token, both counted in prefill-token time. One term corrects for the weights a step streams. They count as extra context shared by the n sequences in the step, W\_b(n)/(n·b) tokens, where b is the KV bytes per token. For a mixture-of-experts model W\_b depends on n. Appendix B derives it. The rule is
+r depends on the hardware, the model and the context at which the prefill rate is calibrated. It does not depend on the hit rate or the load. For Qwen3-Coder-480B on 8 × B200, with the prefill rate at this workload's 117k context, it is about 5,800. Compute dominates a step when the compute per output token exceeds the memory read per output token, both counted in prefill-token time. One term corrects for the weights a step streams. They count as extra context shared by the n sequences in the step, W\_b(n)/(n·b) tokens, where b is the KV bytes per token. For a mixture-of-experts model W\_b depends on n. Appendix B derives it. The rule is
 
 $$
 \frac{U}{O} > \frac{L + W_b(n)/(n\,b)}{r} - 1
@@ -276,7 +276,7 @@ The roofline framework reduces serving evaluation to one ratio, η. It splits th
 | α\_F | prefill efficiency, achieved over peak | calibration job: peak prefill throughput × 2N / F\_peak |
 | W\_peak | HBM bandwidth per replica | datasheet |
 | α\_W | decode read efficiency | calibration job: marginal KV-read bandwidth between one and four long-context decodes, over W\_peak |
-| C | HBM bytes available for KV | engine startup log |
+| C | KV tokens the HBM allocation holds | engine startup log |
 | N | active parameters | model card |
 | b | KV bytes per token, 2 · layers · KV heads · head dim · bytes | model shape, or host-tier bytes loaded over host-tier hits |
 | W\_b | weight bytes a step reads | model card; for a mixture of experts, the experts the step's tokens touch (Appendix B) |
@@ -311,13 +311,13 @@ $$
 The memory term reads the weights once, the KV of every decode sequence once (each decode token attends over its whole context), and the prefix once per prefill chunk. c̄ is the time-average resident context. A request's KV traces a trapezoid in memory and time, from I at arrival to I + O at exit. A rate is sustainable only while all four of the following hold. The first to fail as λ rises is the binding resource:
 
 $$
-\text{compute: } 2N\lambda\,(I(1-h)+O) < F \qquad \text{bandwidth: } \lambda\, b\,(O\bar{c} + I(1-h)\tfrac{I}{T_b}) < W \qquad \text{capacity: } n_d\, b\, \bar{c} \le C \qquad \text{budget: } n_p \le T_b
+\text{compute: } 2N\lambda\,(I(1-h)+O) < F \qquad \text{bandwidth: } \lambda\, b\,(O\bar{c} + I(1-h)\tfrac{I}{T_b}) < W \qquad \text{capacity: } n_d\, \bar{c} \le C \qquad \text{budget: } n_p \le T_b
 $$
 
 Each condition on its own limits λ, the request rate one replica sustains. Three of the four have a closed form (the prefill-budget condition never binds at an 8k chunk). With U = (1 − ρ)·I and L = I + O/2, and dividing the replica's token rate by the accelerators it spans (8 GPUs at TP=8) to get the per-accelerator R:
 
 $$
-\lambda_c = \frac{F}{2N\,(U + O)}, \qquad \lambda_w = \frac{W}{b\,(O L + U I / T_b)}, \qquad \lambda_m = \frac{C}{\frac{W_b}{W}\left(O L b + \frac{U I b}{2 T_b}\right) + C\,\frac{b\,(O L + U I / T_b)}{W}}, \qquad R = \frac{(I + O)\,\min(\lambda_c, \lambda_w, \lambda_m)}{\text{accelerators per replica}}
+\lambda_c = \frac{F}{2N\,(U + O)}, \qquad \lambda_w = \frac{W}{b\,(O L + U I / T_b)}, \qquad \lambda_m = \frac{C}{\frac{W_b}{W}\left(O L + \frac{U I}{2 T_b}\right) + C\,\frac{b\,(O L + U I / T_b)}{W}}, \qquad R = \frac{(I + O)\,\min(\lambda_c, \lambda_w, \lambda_m)}{\text{accelerators per replica}}
 $$
 
 For a dense model that is the whole computation. For a mixture-of-experts model W\_b depends on how many tokens share a step. It is therefore evaluated at the tokens the solution implies: the n = λ\_m·O·t\_iter decoding tokens plus the n·U/O prefill tokens spread into the step. The pair converges in two or three iterations. For the B200 fleet the solution is 29 resident sequences per replica. The step they share looks like this. It carries 29 decode tokens and about 540 prefill tokens, the uncached 7k tokens of a turn spread over that turn's 386 decode steps and summed over the 29 sequences. Its memory time is the weights those 570 tokens touch, nearly all 480 GB of experts, plus the KV of 29 contexts of 117k tokens, about 860 GB. That is 1.34 TB at the measured 33.7 TB/s per replica, 40 ms. Its compute time is 570 tokens at the calibrated 23k prefill tokens per second, 25 ms. Compute runs at 62% while memory sets the step. That is λ\_m = 1.89 requests per second per replica and the 27.6k tokens per second per GPU used throughout. The batch stops at 29 because 29 contexts plus their half-finished outputs fill the 3.4M-token KV allocation. The memory time per sequence is still falling there, as the weight stream is shared more widely. The ceiling is capacity-bound, and the line of Section 3 is still rising where it ends.
