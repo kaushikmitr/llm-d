@@ -156,19 +156,31 @@ Three stacks were evaluated on one six-replica NVIDIA B200 fleet running the age
 
 Each stack ran an ascending ladder of session counts until its throughput had fallen: llm-d at 120, 180, 240 and 300 sessions, Dynamo at 60, 90 and 120, round-robin at 90 and 120. Throughput is steady-state. η is taken at each stack's peak over its ladder (Section 3). The engines' counters were sampled every 15 s: uncached prefill tokens, tokens restored from the host tier, generated tokens, steps, resident and waiting requests, KV occupancy and preemptions. Achieved FLOP/s, HBM traffic and arithmetic intensity follow from them and the model shape. Every level ran on all six replicas, checked from each replica's own counters.
 
-The trace comes from inference-perf's conversation replay. A 3,000-token system prompt is shared by all conversations. Each conversation has its own prefix of about 160k tokens on average (lognormal, clipped to 10k to 200k). Each has 20 turns. A turn adds about 1,500 new input tokens and the previous output, itself about 425 tokens on average. The tool pause between turns is 15 s on average (lognormal, 1 to 100 s). What each level delivered over the steady window, from the per-request records and the engine counters:
+The trace comes from inference-perf's conversation replay:
 
-| Stack | Sessions configured | Sessions live, mean | Mean prompt I, tokens | Mean output O, tokens | Tool pause, mean | Other idle per turn | Engine time per turn | Requests in the engine per replica, running + waiting |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| llm-d | 120 | 103 | 132k | 417 | 13.5 s | 4.0 s | 8.9 s | 5.9 + 0.1 |
-| llm-d | 180 | 166 | 134k | 387 | 12.8 s | 3.7 s | 22.4 s | 11.9 + 4.2 |
-| llm-d | 240 | 217 | 129k | 406 | 13.4 s | 6.7 s | 34.3 s | 18.1 + 6.3 |
-| llm-d | 300 | 272 | 140k | 390 | 13.5 s | 13.2 s | 95.0 s | 20.9 + 19.1 |
-| Dynamo KV router | 60 | 54 | 135k | 419 | 13.2 s | 3.6 s | 15.2 s | 4.0 + 0.4 |
-| Dynamo KV router | 90 | 81 | 118k | 400 | 12.2 s | 3.8 s | 21.1 s | 7.5 + 0.8 |
-| Dynamo KV router | 120 | 107 | 129k | 392 | 13.7 s | 7.3 s | 36.2 s | 11.4 + 1.6 |
-| round-robin Service | 90 | 79 | 114k | 394 | 12.5 s | 7.2 s | 34.0 s | 7.7 + 1.7 |
-| round-robin Service | 120 | 103 | 125k | 400 | 14.1 s | 13.5 s | 55.9 s | 10.8 + 3.2 |
+| Trace parameter | Value |
+| --- | --- |
+| Turns per conversation | 20 |
+| Shared system prompt | 3,000 tokens |
+| Per-conversation prefix | about 160k tokens on average, lognormal, clipped to 10k to 200k |
+| New input per turn | about 1,500 tokens, plus the previous output |
+| Output per turn | about 425 tokens on average |
+| Tool pause between turns | 15 s on average, lognormal, 1 to 100 s |
+| Prefix overlap ρ | 0.94 over the whole trace; 0.98 over the steady window |
+
+What each level delivered over the steady window, from the per-request records and the engine counters:
+
+| Stack | Sessions configured | Sessions live, mean | Turns in window (per s) | Mean prompt I, tokens | Mean output O, tokens | Tool pause, mean | Other idle per turn | Engine time per turn | Requests in the engine per replica, running + waiting |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| llm-d | 120 | 103 | 2,135 (4.5) | 132k | 417 | 13.5 s | 4.0 s | 8.9 s | 5.9 + 0.1 |
+| llm-d | 180 | 166 | 3,195 (4.6) | 134k | 387 | 12.8 s | 3.7 s | 22.4 s | 11.9 + 4.2 |
+| llm-d | 240 | 217 | 4,284 (4.4) | 129k | 406 | 13.4 s | 6.7 s | 34.3 s | 18.1 + 6.3 |
+| llm-d | 300 | 272 | 5,423 (2.5) | 140k | 390 | 13.5 s | 13.2 s | 95.0 s | 20.9 + 19.1 |
+| Dynamo KV router | 60 | 54 | 1,069 (1.9) | 135k | 419 | 13.2 s | 3.6 s | 15.2 s | 4.0 + 0.4 |
+| Dynamo KV router | 90 | 81 | 1,626 (2.4) | 118k | 400 | 12.2 s | 3.8 s | 21.1 s | 7.5 + 0.8 |
+| Dynamo KV router | 120 | 107 | 2,140 (2.1) | 129k | 392 | 13.7 s | 7.3 s | 36.2 s | 11.4 + 1.6 |
+| round-robin Service | 90 | 79 | 1,507 (1.7) | 114k | 394 | 12.5 s | 7.2 s | 34.0 s | 7.7 + 1.7 |
+| round-robin Service | 120 | 103 | 1,999 (1.4) | 125k | 400 | 14.1 s | 13.5 s | 55.9 s | 10.8 + 3.2 |
 
 A session is live while it has a turn outstanding or is in its tool pause. The rest of the configured sessions are between turns in the harness. That gap, and the other idle per turn in the table, are harness behaviour, described under The load the harness delivered below. Both enter the client factor. η therefore describes the measured harness and stacks, not an idealised closed loop. Sessions live divided by six, times the engine share of the cycle, is the batch each replica decodes: about six at 120 sessions for llm-d, twelve at 180.
 
