@@ -18,6 +18,8 @@ On an NVIDIA B200 fleet with a host KV tier, running one agentic coding workload
 
 *B200 fleet experiment · peak over each stack's load ladder (Section 6) · all three stacks in their documented default configuration, untuned*
 
+One caveat belongs beside the chart. The replay harness kept 86 to 92% of the configured sessions in flight and added idle time between turns. The client factor carries that behaviour. Section 6 gives the numbers.
+
 ## 1. The question
 
 The GPUs are no faster for one stack than for another. The difference is how much work each stack repeats and how much of the hardware it leaves idle. Every request brings a prompt. When the stack can reuse that prompt's KV cache from an earlier turn, it skips recomputing those tokens. When it cannot, it spends GPU time on work it could have avoided. Reuse is not the whole story. A stack can keep almost every reusable token and still lose throughput to memory pressure, preemption or slow steps. Telling these losses apart needs a yardstick that does not move with the stack.
@@ -175,14 +177,16 @@ A session is live while it has a turn outstanding or is in its tool pause. The r
 | Stack | Sessions | Steady tok/s, input + output | η | Hit rate, HBM + host |
 | --- | --- | --- | --- | --- |
 | llm-d | 120 | 604k | 0.46 | 0.98 |
-| llm-d | 180 | 622k | 0.47 | 0.92 |
+| llm-d | 180 | 622k | **0.47** | 0.92 |
 | llm-d | 240 | 570k | 0.43 | 0.90 |
 | llm-d | 300 | 345k | 0.26 | 0.75 |
 | Dynamo KV router | 60 | 253k | 0.19 | 0.76 |
-| Dynamo KV router | 90 | 287k | 0.22 | 0.74 |
+| Dynamo KV router | 90 | 287k | **0.22** | 0.74 |
 | Dynamo KV router | 120 | 271k | 0.20 | 0.67 |
-| round-robin Service | 90 | 191k | 0.14 | 0.62 |
+| round-robin Service | 90 | 191k | **0.14** | 0.62 |
 | round-robin Service | 120 | 180k | 0.14 | 0.53 |
+
+Bold marks each stack's peak, the level its headline η is taken from.
 
 ![figure](figures/fig4-eta-vs-hit-rate.png)
 
@@ -216,7 +220,7 @@ The counters behind the takeaways, per run over the steady window. The hit rate 
 
 ### The load the harness delivered
 
-inference-perf's conversation replay (v0.7.0) advances conversations in lockstep when used as documented. The runs therefore set the concurrency to four times the number of conversations, run 20 turns per conversation and use 32 worker processes. The engines still never see more than one request per conversation. With that, the harness kept 86 to 92% of the configured sessions in flight. Idle time per turn beyond the tool pause was 4 to 7 s at the peaks and 13 s at the collapsed levels. The decomposition carries this as the client factor, so the ranking does not depend on it. The upstream fix, one closed loop per conversation that records its own idle time, would make the workaround unnecessary.
+inference-perf's conversation replay (v0.7.0) advances conversations in lockstep when used as documented. The runs therefore set the concurrency to four times the number of conversations, run 20 turns per conversation and use 32 worker processes. The engines still never see more than one request per conversation. With that, the harness kept 86 to 92% of the configured sessions in flight. Idle time per turn beyond the tool pause was 4 to 7 s at the peaks and 13 s at the collapsed levels. The decomposition carries this as the client factor, so no stack is charged for it. The upstream fix, one closed loop per conversation that records its own idle time, would make the workaround unnecessary.
 
 ### Run notes
 
