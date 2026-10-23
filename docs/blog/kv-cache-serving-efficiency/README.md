@@ -26,7 +26,7 @@ The GPUs are no faster for one stack than for another. The difference is how muc
 
 The yardstick is the ratio of the TL;DR. The post makes two contributions. One is a metric: η and a way to compute its workload-specific ceiling. The other is a diagnosis: the split of the shortfall, read with the engine's counters, says whether the client, routing, retention, capacity or the engine is responsible. The second is the one an operator uses day to day. The B200 results of Section 6 demonstrate both.
 
-In this framework, every mechanism a stack adds moves the reuse factor, the engine factor, or the number of sessions the fleet can hold.
+In this framework, whatever a mechanism costs or saves in communication, scheduling or placement shows up in one of three places: the reuse factor, the engine factor, or the number of sessions the fleet can hold.
 
 ### The centrality of the KV cache
 
