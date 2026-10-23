@@ -216,7 +216,7 @@ Bold marks each stack's peak, the level its headline η is taken from.
 
 ### Detailed counters
 
-The counters behind the takeaways, per run over the steady window. HBM used is the mean of the engine's KV-block usage gauge, a fraction of the KV allocation. The hit rate from the host tier is the share of all prompt tokens that were restored from it.
+The counters behind the takeaways, per run over the steady window. HBM used is the mean of the engine's KV-block usage gauge, a fraction of the KV allocation. A preemption is the engine evicting a running request's KV from HBM to free blocks and requeuing the request. The host tier is write-through, so its copy survives, and the request restores from it when it resumes rather than recomputing. The hit rate from the host tier is the share of all prompt tokens that were restored from it.
 
 | Stack | Sessions | TTFT median | Hit rate from the host tier | HBM used | Preemptions / min | HBM bandwidth, % of peak | FP8 compute, % of peak | AI, FLOP/B |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
