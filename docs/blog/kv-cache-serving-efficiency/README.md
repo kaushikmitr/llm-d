@@ -4,7 +4,7 @@ Oct 20, 2026 · @kaushik mitra · Draft v0.3
 
 ## TL;DR
 
-Evaluating the efficiency of an LLM inference serving system can be reduced to a single ratio. Three inputs give it: the workload's intrinsic prefix overlap, its mean input and output lengths, and five hardware numbers measured on the deployment (Appendix A). From these we compute a **roofline**: the most throughput, input plus output tokens per second, that the hardware can sustain for that workload. For each load level, the steady-state throughput the system served, divided by this ceiling is its **serving efficiency η**.
+Evaluating the efficiency of an LLM inference serving system can be reduced to a single ratio. Its inputs are the workload's intrinsic prefix overlap, its mean input and output lengths, and five hardware numbers measured on the deployment (Appendix A). From these we compute a **roofline** for that workload on that hardware: the most throughput, input plus output tokens per second, the hardware can sustain. For each load level, the steady-state throughput the system served, divided by this ceiling, is its **serving efficiency η**. The ceiling is specific to the workload. η compares systems on one workload. It is not a hardware utilisation figure.
 
 The shortfall from the ceiling splits into three factors whose product is η:
 
@@ -12,7 +12,7 @@ The shortfall from the ceiling splits into three factors whose product is η:
 2. **Reuse**: prompt tokens the system had to recompute, either because the request went to a replica that did not hold their KV or because it had been evicted.
 3. **Engine**: what the execution engine wasted at the hit rate it had.
 
-Separately, a run's arithmetic intensity shows whether compute or memory dominated its steps. It is computed from the engine's token counters and the model's per-token costs. On an NVIDIA B200 fleet with a host KV tier, running an agentic coding workload, **llm-d** reaches η of 0.47, **NVIDIA Dynamo** 0.22 and **round-robin** 0.14. The prefix hit rate each stack kept sets the ranking. llm-d keeps it at 0.90 or above until HBM fills with the sessions it is decoding, at 240 sessions. Dynamo and round-robin are at 0.76 and 0.62 at 60 and 90 sessions, with HBM a quarter full. The framework is for infrastructure engineers building or selecting serving stacks, and for vendors who want standardised performance claims.
+On an NVIDIA B200 fleet with a host KV tier, running one agentic coding workload, with each stack in its documented default configuration, **llm-d** reaches η of 0.47, **NVIDIA Dynamo** 0.22 and **round-robin** 0.14. The numbers hold for this workload, fleet and configuration. They demonstrate the framework rather than rank the stacks in general. The prefix hit rate each stack kept sets the ranking. llm-d keeps it at 0.90 or above until HBM fills with the sessions it is decoding, at 240 sessions. Dynamo and round-robin are at 0.76 and 0.62 at 60 and 90 sessions, with HBM a quarter full. The framework is for infrastructure engineers building or selecting serving stacks, and for vendors who want standardised performance claims.
 
 ![figure](figures/fig0-eta-peaks.png)
 
@@ -20,9 +20,11 @@ Separately, a run's arithmetic intensity shows whether compute or memory dominat
 
 ## 1. The question
 
-This post argues that the performance of any LLM serving system can be captured by one efficiency ratio: what it served, over what its hardware could have served on the same workload, with the shortfall split into the three factors above.
+Two serving stacks can run the same model on the same GPUs, serve the same workload and deliver very different throughput. The GPUs are no faster for one than for the other. The difference is how much work each stack repeats and how much of the hardware it leaves idle. Every request brings a prompt. When the stack can reuse that prompt's KV cache from an earlier turn, it skips recomputing those tokens. When it cannot, because the request landed on a replica that does not hold the KV or because the KV was evicted, it spends GPU time on work it could have avoided. Reuse is not the whole story. A stack can keep almost every reusable token and still lose throughput to memory pressure, preemption or slow steps. Telling these losses apart needs a yardstick that does not move with the stack.
 
-Every mechanism a stack adds moves the reuse factor, the engine factor, or the number of sessions the fleet can hold, and nothing else.
+This post argues that the performance of any LLM serving system can be captured by one efficiency ratio: what it served, over what its hardware could have served on the same workload. The shortfall splits into the three factors above. The post makes two contributions. One is a metric: η and a way to compute its workload-specific ceiling. The other is a diagnosis: the split of the shortfall, read with the engine's counters, says whether the client, routing, retention, capacity or the engine is responsible. The second is the one an operator uses day to day. The B200 results of Section 6 demonstrate both.
+
+In this framework, every mechanism a stack adds moves the reuse factor, the engine factor, or the number of sessions the fleet can hold.
 
 ### The centrality of the KV cache
 
@@ -38,7 +40,7 @@ Seen from the KV cache, these are facets of one placement problem. The question 
 
 ## 2. Compute or memory: where a run sits on the roofline
 
-An engine serves requests in steps. One step is one forward pass over every request it is working on at that moment, and it takes the longer of its compute time and its memory time. Section 2.1 gives the rule for which of the two it is, for a workload's ceiling and for a run. The rule uses four numbers, introduced here. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far. Every decode step reads all of it from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U. ρ places the ceiling. A run's measured h places that run.
+An engine serves requests in steps. One step is one forward pass over every request it is working on at that moment, and it takes the longer of its compute time and its memory time. Section 2.1 gives the rule for which of the two it is, for a workload's ceiling and for a run. A run's side can also be read from its arithmetic intensity, computed from the engine's token counters and the model's per-token costs. The chart below places the nine runs of Section 6 that way. The rule uses four numbers, introduced here. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far. Every decode step reads all of it from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U. ρ places the ceiling. A run's measured h places that run.
 
 ![figure](figures/fig1-measured-roofline.png)
 
@@ -92,6 +94,20 @@ R comes from one rule, called the step-time law in this post. A step takes the l
 
 R is an upper bound by construction. It makes three assumptions. The hit rate is the workload's own ρ, so any reuse the system fails to find, keep or share shows up as a shortfall. Paused sessions' KV is held outside HBM at no cost. Prefill is spread evenly over the steps rather than run in whole chunks. Smaller omissions are listed in Section 8.
 
+The symbols used from here on, in one place:
+
+| Symbol | Meaning | Where it comes from |
+| --- | --- | --- |
+| I, O | mean input and output tokens per turn | the trace |
+| ρ | the workload's prefix overlap: the hit rate an oracle reaches when it replays the trace with unlimited cache | the trace |
+| h | the prefix-cache hit rate a run achieved, counting HBM and host-tier hits | engine counters |
+| U | uncached input per turn, (1 − h)·I | h and I |
+| L | resident context per request, prompt plus output so far | the trace |
+| n | batch: the requests decoding together in one step on a replica | engine counters |
+| r | the ridge: the arithmetic intensity at which compute time equals memory time | hardware rates, Section 2.1 |
+| R | the ceiling: tokens per second per accelerator at h = ρ | step-time law, Appendix B |
+| η | achieved tokens per second per accelerator, over R | the load sweep |
+
 ### The ceiling for the B200 fleet
 
 On the B200 deployment calibrated in Appendix A, the agentic workload (I = 117k, O = 386, ρ = 0.94) has a ceiling of 27.6k tokens per second per GPU, 1.33M for the six-replica fleet. It is capacity-bound. The figure draws the throughput the step-time law allows as the number of sequences decoding per replica grows. The line ends where their KV fills HBM, at 29. The line assumes HBM holds decoding sequences only. At the ceiling about 23 sessions per replica are paused in a tool call at any moment. Their KV has to live somewhere else. A fleet whose HBM also held them would stop at 13 sequences and 0.69 of R. The host tier is what moves that wall.
@@ -109,6 +125,8 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 - **Client, S(I + O)/(Z + T\_ideal) over R, capped at 1.** How much of the ceiling the client asked for: what its sessions and idle time would get from an engine that loses nothing, at the batch those sessions produce. A property of the load generator, not the system.
 - **Reuse, (Z + T\_ideal)/(Z + T\_h).** Time lost recomputing prompt tokens, either because the request went to a replica that did not hold their KV or because it had been evicted.
 - **Engine, (Z + T\_h)/(Z + T).** Everything else the engine lost at the hit rate it had.
+
+Two runs of Section 6 show how the factors read. llm-d at 120 sessions: client 0.48, reuse 1.00, engine 0.96, η 0.46. The client asked for under half the ceiling. The stack recomputed nothing. The engine lost 4% of what was asked. Dynamo at 90 sessions: client 0.34, reuse 0.92, engine 0.70, η 0.22. The client asked for a third of the ceiling. Recompute took 8% of that. The engine lost a further 30% at the hit rate it had. The factors multiply. They are not independent causes. Each is a ratio of cycle times under one chosen ideal engine. The split is an attribution under that model, not a unique causal decomposition. A loss can move between reuse and engine where the idealisation misses, as the Dynamo run at 60 sessions below shows.
 
 ![figure](figures/fig3c-ceiling-split.png)
 
