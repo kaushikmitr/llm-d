@@ -4,7 +4,7 @@ Oct 20, 2026 · @kaushik mitra · Draft v0.3
 
 ## TL;DR
 
-Evaluating the efficiency of an LLM inference serving system can be reduced to a single ratio. Three inputs give it: the workload's intrinsic prefix overlap, its mean input and output lengths, and five hardware numbers measured on the deployment (Appendix A). From these we compute a **roofline**: the most tokens per second, input plus output, that the hardware can sustain for that workload. For each load level, the steady-state throughput the system served, in the same tokens, divided by this ceiling is its **serving efficiency η**.
+Evaluating the efficiency of an LLM inference serving system can be reduced to a single ratio. Three inputs give it: the workload's intrinsic prefix overlap, its mean input and output lengths, and five hardware numbers measured on the deployment (Appendix A). From these we compute a **roofline**: the most throughput, input plus output tokens per second, that the hardware can sustain for that workload. For each load level, the steady-state throughput the system served, divided by this ceiling is its **serving efficiency η**.
 
 The shortfall from the ceiling splits into three factors whose product is η:
 
@@ -12,7 +12,7 @@ The shortfall from the ceiling splits into three factors whose product is η:
 2. **Reuse**: prompt tokens the system had to recompute, either because the request went to a replica that did not hold their KV or because it had been evicted.
 3. **Engine**: what the execution engine wasted at the hit rate it had.
 
-Separately, a run's arithmetic intensity shows whether compute or memory dominated its steps. It is computed from the engine's token counters and the model's per-token costs. On an NVIDIA B200 fleet with a host KV tier, running an agentic coding workload, **llm-d** reaches 0.47 of the ceiling, **NVIDIA Dynamo** 0.22 and **round-robin** 0.14. The prefix hit rate each stack kept sets the ranking. llm-d keeps it at 0.90 or above until HBM fills with the sessions it is decoding, at 240 sessions. Dynamo and round-robin are at 0.76 and 0.62 at their lightest loads, with HBM a quarter full. The framework is for infrastructure engineers building or selecting serving stacks, and for vendors who want standardised performance claims.
+Separately, a run's arithmetic intensity shows whether compute or memory dominated its steps. It is computed from the engine's token counters and the model's per-token costs. On an NVIDIA B200 fleet with a host KV tier, running an agentic coding workload, **llm-d** reaches η of 0.47, **NVIDIA Dynamo** 0.22 and **round-robin** 0.14. The prefix hit rate each stack kept sets the ranking. llm-d keeps it at 0.90 or above until HBM fills with the sessions it is decoding, at 240 sessions. Dynamo and round-robin are at 0.76 and 0.62 at 60 and 90 sessions, with HBM a quarter full. The framework is for infrastructure engineers building or selecting serving stacks, and for vendors who want standardised performance claims.
 
 ![figure](figures/fig0-eta-peaks.png)
 
@@ -38,7 +38,7 @@ Seen from the KV cache, these are facets of one placement problem. The question 
 
 ## 2. Compute or memory: where a run sits on the roofline
 
-An engine serves requests in steps. One step is one forward pass over every request it is working on at that moment, and it takes the longer of its compute time and its memory time. Section 2.1 gives the rule for which of the two it is, for a workload's ceiling and for a run. The rule uses four numbers, introduced here. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens, token-weighted, that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far. Every decode step reads all of it from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U. ρ places the ceiling. A run's measured h places that run.
+An engine serves requests in steps. One step is one forward pass over every request it is working on at that moment, and it takes the longer of its compute time and its memory time. Section 2.1 gives the rule for which of the two it is, for a workload's ceiling and for a run. The rule uses four numbers, introduced here. h is the prefix-cache hit rate a run achieved: the fraction of prompt tokens that were found cached instead of recomputed. U = (1 − h)·I is the uncached input, the prompt tokens that had to be computed. L is the resident context, the prompt plus the output so far. Every decode step reads all of it from HBM. n is the batch, the requests decoding together in one step. The hit rate enters only through U. ρ places the ceiling. A run's measured h places that run.
 
 ![figure](figures/fig1-measured-roofline.png)
 
@@ -50,7 +50,7 @@ The figure places the nine fleet runs of Section 6 on this chart. The dashed roo
 
 The hit rate decides where a run lands. At a 0.98 hit rate the fleet sits on the memory roof, because nearly all of its steps are decode steps. A decode step reads the weights and the full KV of every decoding request, hundreds of gigabytes, and advances each request by one token. Its FLOPs scale with those few tokens; its bytes do not. Every byte read therefore serves few FLOPs. As the hit rate falls, the same workload moves right and up, across the ridge onto the compute roof. The GPUs get busier and the useful token rate gets lower. The added compute is recomputing contexts the stack failed to reuse.
 
-In this post, compute-bound and memory-bound describe a workload: which resource limits its ceiling, the throughput at hit rate ρ (Section 3). A run is described by which term dominated its steps: left of the ridge memory, right of it compute. For the agentic trace the ceiling is memory-bound. The context is about 117k tokens, and at ρ a turn prefills only about 7k of it. The limit is how much KV the fleet can hold and how fast it can read it. The runs right of the ridge are there because recompute dominated their steps, not because the workload is compute-bound. Section 2.1 gives the rule for which side a workload's ceiling falls on.
+In this post, compute-bound and memory-bound describe a workload: which resource limits its ceiling, the throughput at hit rate ρ (Section 3). A run is described by which term dominated its steps: left of the ridge memory, right of it compute. For our agentic trace the ceiling is memory-bound. The context is about 117k tokens, and at ρ a turn prefills only about 7k of it. The limit is how much KV the fleet can hold and how fast it can read it. The runs right of the ridge are there because recompute dominated their steps. Section 2.1 gives the rule for which side any workload's ceiling falls on.
 
 ### 2.1 Which side of the ridge a workload falls on
 
