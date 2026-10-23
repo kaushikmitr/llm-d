@@ -4,7 +4,7 @@ Oct 23, 2026 · @kaushik mitra · Draft v0.4
 
 ## TL;DR
 
-Two serving stacks on the same GPUs and the same workload can deliver very different throughput. This post asks how close each gets to what the hardware allows, and where the rest goes. One ratio answers both. Its inputs are the workload's intrinsic prefix overlap, its mean input and output lengths, and five hardware numbers measured on the deployment (Appendix A). From these we compute a **ceiling** for that workload on that hardware: the most throughput, input plus output tokens per second, the hardware can sustain. For each load level, the steady-state throughput the system served, divided by this ceiling, is its **serving efficiency η**. The ceiling is specific to the workload. η compares systems on one workload. It is not a hardware utilisation figure.
+Two serving stacks on the same GPUs and the same workload can deliver very different throughput. This post asks how close each gets to what the hardware allows, and where the rest goes. One ratio answers both. Its inputs are the workload's intrinsic prefix overlap, its mean input and output lengths, the model's shape, and five hardware numbers. Two of the five are calibrated on the deployment with short jobs. The rest come from the datasheet and the engine's startup log (Appendix A). From these we compute a **ceiling** for that workload on that hardware: the most throughput, input plus output tokens per second, the hardware can sustain. For each load level, the steady-state throughput the system served, divided by this ceiling, is its **serving efficiency η**. The ceiling is specific to the workload. η compares systems on one workload. It is not a hardware utilisation figure.
 
 The shortfall from the ceiling splits into three factors whose product is η:
 
@@ -78,13 +78,13 @@ $$
 r = \frac{\text{HBM bandwidth} / \text{KV bytes per token}}{\text{prefill tokens per second}}
 $$
 
-r depends on the hardware and the model only. For Qwen3-Coder-480B on 8 × B200, at this workload's 117k context, it is about 5,800. Compute dominates a step when the compute per output token exceeds the memory read per output token, both counted in prefill-token time. One correction: the weights a step streams count as extra context shared by the n sequences in the step, worth W\_b(n)/(n·b) tokens, where b is the KV bytes per token. The rule is
+r depends on the hardware and the model only. For Qwen3-Coder-480B on 8 × B200, at this workload's 117k context, it is about 5,800. Compute dominates a step when the compute per output token exceeds the memory read per output token, both counted in prefill-token time. One term corrects for the weights a step streams. They count as extra context shared by the n sequences in the step, W\_b(n)/(n·b) tokens, where b is the KV bytes per token. For a mixture-of-experts model W\_b depends on n. Appendix B derives it. The rule is
 
 $$
 \frac{U}{O} > \frac{L + W_b(n)/(n\,b)}{r} - 1
 $$
 
-For the agentic workload (L = 117k, U = 7.5k, O = 386), U/O = 19 against a threshold of 30 at the ceiling's batch of 29. The workload is memory-bound. Capacity is not in the rule. It caps n and enters the ceiling as a separate condition (Appendix B).
+For the agentic workload (L = 117k, U = 7.3k, O = 386), U/O = 19 against a threshold of 30 at the ceiling's batch of 29. The workload is memory-bound. Capacity is not in the rule. It caps n and enters the ceiling as a separate condition (Appendix B).
 
 The figure draws the rule for this deployment. For each context length and U/O it shows the smallest batch at which compute dominates, and grey where memory dominates at every batch the HBM holds. llm-d's runs up to 240 sessions sit in the grey. Dynamo, round-robin and llm-d at 300 sessions sit in the blue. There compute dominates once three to eight requests share a step, and those runs had more than that decoding.
 
