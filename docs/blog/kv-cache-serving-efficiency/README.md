@@ -12,7 +12,7 @@ The shortfall from the ceiling splits into three factors whose product is η:
 2. **Reuse**: prompt tokens the system had to recompute, either because the request went to a replica that did not hold their KV or because it had been evicted.
 3. **Engine**: what the execution engine wasted at the hit rate it had.
 
-On an NVIDIA B200 fleet with a host KV tier, running one agentic coding workload, with each stack in its documented default configuration, **llm-d** reaches η of 0.47, **NVIDIA Dynamo** 0.22 and **round-robin** 0.14. The numbers hold for this workload, fleet and configuration. They demonstrate the framework rather than rank the stacks in general. The prefix hit rate each stack kept sets the ranking. llm-d keeps it at 0.90 or above until HBM fills with the sessions it is decoding, at 240 sessions. Dynamo and round-robin are at 0.76 and 0.62 at 60 and 90 sessions, with HBM a quarter full. The framework is for infrastructure engineers building or selecting serving stacks, and for vendors who want standardised performance claims.
+On an NVIDIA B200 fleet with a host KV tier, running one agentic coding workload, with each stack in its documented default configuration, **llm-d** reaches η of 0.47, **NVIDIA Dynamo** 0.22 and **round-robin** 0.14. The numbers hold for this workload, fleet and configuration. They demonstrate the framework rather than rank the stacks in general. The prefix hit rate each stack kept explains much of the gap between them. llm-d keeps it at 0.90 or above until HBM fills with the sessions it is decoding, at 240 sessions. Dynamo and round-robin are at 0.76 and 0.62 at 60 and 90 sessions, with HBM a quarter full. The framework is for infrastructure engineers building or selecting serving stacks, and for vendors who want standardised performance claims.
 
 ![figure](figures/fig0-eta-peaks.png)
 
@@ -28,7 +28,7 @@ In this framework, every mechanism a stack adds moves the reuse factor, the engi
 
 ### The centrality of the KV cache
 
-Every token a transformer generates is computed from the key and value (KV) tensors of every preceding token. This **KV cache** is the only large state an inference system carries across tokens, conversation turns and prefix-sharing requests. Model weights are static and shared. Activations are transient. So the costs that differ from one request to the next are all KV decisions: compute it or fetch it, where to keep it and for how long, which block to evict, and which replica the request should land on so that request and KV meet.
+Every token a transformer generates is computed from the key and value (KV) tensors of every preceding token. This **KV cache** is the only large state an inference system carries across tokens, conversation turns and prefix-sharing requests. Model weights are static and shared. Activations are transient. So the costs a stack can shift from one request to the next are mostly KV decisions: compute it or fetch it, where to keep it and for how long, which block to evict, and which replica the request should land on so that request and KV meet.
 
 The industry has built specialised solutions at three layers of the stack:
 
@@ -99,7 +99,7 @@ The symbols used from here on, in one place:
 | Symbol | Meaning | Where it comes from |
 | --- | --- | --- |
 | I, O | mean input and output tokens per turn | the trace |
-| ρ | the workload's prefix overlap: the hit rate an oracle reaches when it replays the trace with unlimited cache | the trace |
+| ρ | the workload's prefix overlap: the hit rate an oracle reaches when it replays the whole trace with unlimited cache (0.94 here; the same oracle over the steady window alone reaches 0.98, see Section 4) | the trace |
 | h | the prefix-cache hit rate a run achieved, counting HBM and host-tier hits | engine counters |
 | U | uncached input per turn, (1 − h)·I | h and I |
 | L | resident context per request, prompt plus output so far | the trace |
@@ -120,7 +120,7 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 
 ## 4. Where the shortfall goes
 
-η judges a system against the hardware. A measured run also reflects its load generator. The decomposition therefore treats the generator as a client whose behaviour is given. It uses only what the client controls and what the system did with it. In a closed loop the client controls two things. One is the number of sessions S it runs. The other is Z, how long each session sits idle between the server finishing a turn and the client sending the next (tool time plus anything else the client does). Neither needs the server to measure. Three per-turn service times enter. T\_ideal is what an engine that loses nothing would take with full reuse: O decode steps at the step-time law's duration for the run's batch. It is not zero, since output comes one token per step. T\_h is the same at the achieved hit rate. T is the measured one. Such an engine would see each session cycle in Z + T\_ideal. The most this client could get from any server is therefore S(I + O)/(Z + T\_ideal). Little's law then gives η as a product of three factors:
+η judges a system against the hardware. A measured run also reflects its load generator. The decomposition therefore treats the generator as a client whose behaviour is given. It uses only what the client controls and what the system did with it. In a closed loop the client controls two things. One is the number of sessions S it runs. The other is Z, how long each session sits idle between the server finishing a turn and the client sending the next (tool time plus anything else the client does). Neither needs the server to measure. Three per-turn service times enter. T\_ideal is what an engine that loses nothing would take with full reuse: O decode steps at the step-time law's duration for the run's batch. It is not zero, since output comes one token per step. Full reuse here is the oracle hit rate over the steady window, 0.98, not the whole-trace ρ of 0.94. The two differ because ρ counts every conversation's first turn, whose whole prompt is new. The steady window holds few first turns. The runs' hit rates are measured over that same window, so the ideal they are held to is the oracle over that window too. Against ρ, a run could beat the ideal. The ceiling keeps ρ because the workload as a whole includes the first turns. The choice does not move R. This workload is capacity-bound, and R at 0.98 is within 0.1% of R at ρ. T\_h is the same as T\_ideal at the achieved hit rate. T is the measured one. Such an engine would see each session cycle in Z + T\_ideal. The most this client could get from any server is therefore S(I + O)/(Z + T\_ideal). Little's law then gives η as a product of three factors:
 
 - **Client, S(I + O)/(Z + T\_ideal) over R.** How much of the ceiling the client asked for: what its sessions and idle time would get from an engine that loses nothing, at the batch those sessions produce. A property of the load generator, not the system. It is not capped. It exceeds 1 when the client offers more than the ceiling can serve. The product then still equals η, and the wait that even an engine at the ceiling would impose lands in the engine factor. No run in this post reaches 1. The largest is 0.77.
 - **Reuse, (Z + T\_ideal)/(Z + T\_h).** Time lost recomputing prompt tokens, either because the request went to a replica that did not hold their KV or because it had been evicted.
@@ -197,7 +197,7 @@ The second figure shows the resource that sets llm-d's peak. Its throughput rise
 ### Key takeaways
 
 - **The knee is HBM capacity for the sessions being decoded.** llm-d keeps the hit rate at the workload's level up to 240 sessions, with the host tier supplying up to two thirds of the hits. Past 180 sessions the KV of the requests decoding at once fills HBM and the engine starts preempting. A preempted request is restored from the host tier rather than recomputed. But it waits for a slot and for the copy, so turns get longer and throughput falls while the hit rate holds.
-- **The hit rate explains the ranking.** Dynamo's router kept 0.76 to 0.67 and round-robin 0.62 to 0.53, against the 0.98 an oracle reaches over the same window. Both peak with HBM about a quarter full and no preemptions. Their shortfall is routing: a turn lands on a replica that holds none of its context in either tier, and the prompt is recomputed. Dynamo ran with default routing weights and the stock frontend, as a user following its documentation would deploy it. No stack was tuned beyond llm-d's documented prefill-rate calibration.
+- **The hit rate explains much of the throughput gap in these runs.** Dynamo's router kept 0.76 to 0.67 and round-robin 0.62 to 0.53, against the 0.98 an oracle reaches over the same window. Both peak with HBM about a quarter full and no preemptions. Their shortfall starts with routing: a turn lands on a replica that holds none of its context in either tier, and the prompt is recomputed. Dynamo ran with default routing weights and the stock frontend, as a user following its documentation would deploy it. No stack was tuned beyond llm-d's documented prefill-rate calibration.
 - **The rule and the roofline agree.** The rule of Section 2.1, applied to each run's measured hit rate, context and batch size, puts eight of the nine runs on the same side of the measured ridge (about 290 FLOP/B) as their arithmetic intensity. The ninth, Dynamo at 90 sessions, sits at 283 FLOP/B, within 3% of it. Both use the same per-token costs. This is a consistency check, not an independent measurement.
 
 ### The load the harness delivered
@@ -238,7 +238,7 @@ None of these changes the order of the stacks or the hit-rate finding. They limi
 
 ## 9. Conclusion
 
-The roofline framework reduces serving evaluation to one ratio, η. It splits the shortfall into three factors that each name a lever: the load offered, reuse, and the engine. On the B200 fleet measured here the ranking, llm-d 0.47, Dynamo 0.22, round-robin 0.14, is set by the prefix hit rate each stack kept.
+The roofline framework reduces serving evaluation to one ratio, η. It splits the shortfall into three factors that each name a lever: the load offered, reuse, and the engine. Three claims in this post have different standing. Observed: on the B200 fleet measured here, llm-d reached 0.47, Dynamo 0.22 and round-robin 0.14. Explained: the factors attribute much of that gap to the prefix hit rate each stack kept, under the documented configurations. Proposed: the same procedure diagnoses other workloads and deployments. The first two rest on the runs of Section 6. The third rests on applying it elsewhere. The reproduction kit is there for that.
 
 ## References
 
