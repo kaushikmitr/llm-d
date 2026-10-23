@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Ceiling with the all-tokens expert convention: W_b evaluated at the tokens in a step, n decode + n*U/O prefill (prefill spread evenly).
 Outputs R, per-run own-I ceilings, the split table, the ideal throughput-vs-n curve, the two capacity walls, the 2.1 thresholds and the rule check."""
-import sys,io,contextlib,json; sys.argv=[sys.argv[0]]; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sys,io,contextlib,json; sys.argv=[sys.argv[0]]; sys.path.insert(0,'/usr/local/google/home/kaushikmitra/kv-whitepaper')
 with contextlib.redirect_stdout(io.StringIO()):
     import ceilings as c, retention as rt
-b=253952; W=0.527*8*8.0e12; Ctok=3403712; TB=8192; FLOOR=0.0058; R8k=37217; p=-0.177; r_ridge=3570
+b=253952; W=0.527*8*8.0e12; Ctok=3403712; TB=8192; FLOOR=0.0058; R8k=37217; p=-0.177; r_ridge=5829
 rt.b=b; rt.P['b']=b; rt.P['W']=W; rt.W=W
 def step(I,O,h,n):
     U=(1-h)*I; L=I+O/2; Ftok=R8k*(I/8192)**p; pre=n*U/O
@@ -23,7 +23,7 @@ H={'llm-d 120':(604,.98),'llm-d 180':(622,.92),'llm-d 240':(570,.90),'llm-d 300'
 print('eta (fleet ceiling):',{k:round(v[0]*1e3/F,2) for k,v in H.items()})
 print('--- split (T_ideal at 0.98, own-I ceilings):')
 pts=[]
-for r in json.load(open(RESULTS+'/round2_inputs.json')):
+for r in json.load(open('retention/round2_inputs.json')):
     nm=r['name']; I_,O_,hh,nr,S=r['I'],r['O'],H[nm][1],r['n_run'],r['conc']; rho_=1-(I_+19*1500)/(20*I_)
     Z=r['Tp']+r['gap']; T=r['T_engine']; Tid=O_*step(I_,O_,0.98,nr); Th=O_*step(I_,O_,hh,nr)
     nn,tp,tt=ceiling(I_,O_,rho_); Rr=tp*6
@@ -44,7 +44,7 @@ def thr(nn,y):  # implicit in y; iterate
 print('  at n=29:',round(thr(29,19),1),' at n=12:',round(thr(12,19),1),' at n=5:',round(thr(5,19),1))
 AI={'llm-d 120':36,'llm-d 180':172,'llm-d 240':239,'llm-d 300':737,'Dynamo 60':200,'Dynamo 90':283,'Dynamo 120':600,'rr 90':303,'rr 120':549}
 agree=0
-for r in json.load(open(RESULTS+'/round2_inputs.json')):
+for r in json.load(open('retention/round2_inputs.json')):
     nm=r['name']; y=(1-H[nm][1])*r['I']/r['O']; nr=r['n_run']; th=(r['I']+c.wread(nr*(1+y))/(nr*b))/r_ridge-1
     a=(y>th)==(AI[nm]>290); agree+=a; print(f"  {nm:11s} U/O {y:6.1f} thr {th:5.1f} rule {'compute' if y>th else 'memory':7s} AI {AI[nm]} {'agree' if a else 'DISAGREE'}")
 print('agree',agree,'of 9')
