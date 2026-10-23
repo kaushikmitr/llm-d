@@ -27,7 +27,7 @@ for r in json.load(open('retention/round2_inputs.json')):
     nm=r['name']; I_,O_,hh,nr,S=r['I'],r['O'],H[nm][1],r['n_run'],r['conc']; rho_=1-(I_+19*1500)/(20*I_)
     Z=r['Tp']+r['gap']; T=r['T_engine']; Tid=O_*step(I_,O_,0.98,nr); Th=O_*step(I_,O_,hh,nr)
     nn,tp,tt=ceiling(I_,O_,rho_); Rr=tp*6
-    client=min(1,S*(I_+O_)/(Z+Tid)/F); reuse=min(1.0,(Z+Tid)/(Z+Th)); eng=(Z+Th)/(Z+T)
+    client=S*(I_+O_)/(Z+Tid)/F; reuse=(Z+Tid)/(Z+Th); eng=(Z+Th)/(Z+T)  # uncapped: client*reuse*eng == eta exactly
     ideal_n=6*nr/step(I,O,rho,nr)*(I+O)/O
     pts.append((nm,nr,H[nm][0],ideal_n))
     print(f"{nm:11s} S {S:3d} Z {Z:5.1f} T {T:5.1f} | client {client:.2f} reuse {reuse:.2f} engine {eng:.2f} | eta {client*reuse*eng:.2f} meas {r['tps_gpu']*48/F:.2f} | R_own {Rr/1e6:.2f}M")
