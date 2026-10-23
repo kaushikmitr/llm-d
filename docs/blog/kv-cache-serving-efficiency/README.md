@@ -168,21 +168,21 @@ The trace comes from inference-perf's conversation replay. A 3,000-token system 
 | round-robin Service | 90 | 79 | 114k | 394 | 12.5 s | 7.2 s | 34.0 s | 7.7 + 1.7 |
 | round-robin Service | 120 | 103 | 125k | 400 | 14.1 s | 13.5 s | 55.9 s | 10.8 + 3.2 |
 
-A session is live while it has a turn outstanding or is in its tool pause. The rest of the configured sessions are between turns in the harness. Sessions live divided by six, times the engine share of the cycle, is the batch each replica decodes: about six at 120 sessions for llm-d, twelve at 180.
+A session is live while it has a turn outstanding or is in its tool pause. The rest of the configured sessions are between turns in the harness. That gap, and the other idle per turn in the table, are harness behaviour, described under The load the harness delivered below. Both enter the client factor. η therefore describes the measured harness and stacks, not an idealised closed loop. Sessions live divided by six, times the engine share of the cycle, is the batch each replica decodes: about six at 120 sessions for llm-d, twelve at 180.
 
 ### Results summary
 
-| Stack | Sessions | Steady tok/s, input + output | η | TTFT median | Hit rate, HBM + host | of which host tier | HBM used | Preemptions / min | HBM bandwidth, % of peak | FP8 compute, % of peak | AI, FLOP/B |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| llm-d | 120 | 604k | 0.46 | 1.2 s | 0.98 | 0.00 | 23% | 0 | 57 | 4 | 36 |
-| llm-d | 180 | 622k | 0.47 | 1.5 s | 0.92 | 0.22 | 43% | 0 | 33 | 10 | 172 |
-| llm-d | 240 | 570k | 0.43 | 2.1 s | 0.90 | 0.66 | 65% | 2.2 | 27 | 11 | 239 |
-| llm-d | 300 | 345k | 0.26 | 36 s | 0.75 | 0.73 | 85% | 6.6 | 15 | 20 | 737 |
-| Dynamo KV router | 60 | 253k | 0.19 | 1.6 s | 0.76 | 0.08 | 14% | 0 | 36 | 13 | 200 |
-| Dynamo KV router | 90 | 287k | 0.22 | 2.1 s | 0.74 | 0.18 | 23% | 0 | 27 | 14 | 283 |
-| Dynamo KV router | 120 | 271k | 0.20 | 3.3 s | 0.67 | 0.21 | 40% | 0 | 17 | 18 | 600 |
-| round-robin Service | 90 | 191k | 0.14 | 4.1 s | 0.62 | 0.13 | 26% | 0 | 27 | 15 | 303 |
-| round-robin Service | 120 | 180k | 0.14 | 10.2 s | 0.53 | 0.16 | 41% | 0 | 19 | 19 | 549 |
+| Stack | Sessions | Steady tok/s, input + output | η | Hit rate, HBM + host |
+| --- | --- | --- | --- | --- |
+| llm-d | 120 | 604k | 0.46 | 0.98 |
+| llm-d | 180 | 622k | 0.47 | 0.92 |
+| llm-d | 240 | 570k | 0.43 | 0.90 |
+| llm-d | 300 | 345k | 0.26 | 0.75 |
+| Dynamo KV router | 60 | 253k | 0.19 | 0.76 |
+| Dynamo KV router | 90 | 287k | 0.22 | 0.74 |
+| Dynamo KV router | 120 | 271k | 0.20 | 0.67 |
+| round-robin Service | 90 | 191k | 0.14 | 0.62 |
+| round-robin Service | 120 | 180k | 0.14 | 0.53 |
 
 ![figure](figures/fig4-eta-vs-hit-rate.png)
 
@@ -197,6 +197,22 @@ A session is live while it has a turn outstanding or is in its tool pause. The r
 - **The knee is HBM capacity for the sessions being decoded.** llm-d keeps the hit rate at the workload's level up to 240 sessions, with the host tier supplying up to two thirds of the hits. Past 180 sessions the KV of the requests decoding at once fills HBM and the engine starts preempting. A preempted request is restored from the host tier rather than recomputed. But it waits for a slot and for the copy, so turns get longer and throughput falls while the hit rate holds.
 - **The hit rate explains much of the throughput gap in these runs.** Dynamo's router kept 0.76 to 0.67 and round-robin 0.62 to 0.53, against the 0.98 an oracle reaches over the same window. Both peak with HBM about a quarter full and no preemptions. Their shortfall starts with routing: a turn lands on a replica that holds none of its context in either tier, and the prompt is recomputed. Dynamo ran with default routing weights and the stock frontend, as a user following its documentation would deploy it. No stack was tuned beyond llm-d's documented prefill-rate calibration.
 - **The rule and the roofline agree.** The rule of Section 2.1, applied to each run's measured hit rate, context and batch size, puts eight of the nine runs on the same side of the measured ridge (about 290 FLOP/B) as their arithmetic intensity. The ninth, Dynamo at 90 sessions, sits at 283 FLOP/B, within 3% of it. Both use the same per-token costs. This is a consistency check, not an independent measurement.
+
+### Detailed counters
+
+The counters behind the takeaways, per run over the steady window. The hit rate from the host tier is the share of all prompt tokens that were restored from it.
+
+| Stack | Sessions | TTFT median | Hit rate from the host tier | HBM used | Preemptions / min | HBM bandwidth, % of peak | FP8 compute, % of peak | AI, FLOP/B |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| llm-d | 120 | 1.2 s | 0.00 | 23% | 0 | 57 | 4 | 36 |
+| llm-d | 180 | 1.5 s | 0.22 | 43% | 0 | 33 | 10 | 172 |
+| llm-d | 240 | 2.1 s | 0.66 | 65% | 2.2 | 27 | 11 | 239 |
+| llm-d | 300 | 36 s | 0.73 | 85% | 6.6 | 15 | 20 | 737 |
+| Dynamo KV router | 60 | 1.6 s | 0.08 | 14% | 0 | 36 | 13 | 200 |
+| Dynamo KV router | 90 | 2.1 s | 0.18 | 23% | 0 | 27 | 14 | 283 |
+| Dynamo KV router | 120 | 3.3 s | 0.21 | 40% | 0 | 17 | 18 | 600 |
+| round-robin Service | 90 | 4.1 s | 0.13 | 26% | 0 | 27 | 15 | 303 |
+| round-robin Service | 120 | 10.2 s | 0.16 | 41% | 0 | 19 | 19 | 549 |
 
 ### The load the harness delivered
 
