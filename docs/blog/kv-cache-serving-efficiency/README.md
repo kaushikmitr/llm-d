@@ -1,6 +1,6 @@
 # The KV Cache-Miss Tax: Quantifying Efficiency in LLM Inference Serving
 
-Oct 23, 2026 · @kaushik mitra · Draft v0.4
+@kaushik mitra · Draft v0.4
 
 ## TL;DR
 
