@@ -1,12 +1,12 @@
-"""Ceilings for the agentic replay with the TRUE output length (harness max_tokens mean), per calibrated deployment."""
+"""SUPERSEDED by ceiling_v2.py for every number in the post; kept for the H200 and TPU comparison rows. Ceilings for the agentic replay with the TRUE output length (harness max_tokens mean), per calibrated deployment."""
 import io, contextlib, sys, math; sys.path.insert(0,'.')
 with contextlib.redirect_stdout(io.StringIO()):
     from kvmodel import Replica, GiB
 N_act=35e9; N_tot=480e9; E,k=160,8; e=(N_tot-N_act)/(E-k); dense=N_act-k*e
 def wread(n): return dense+E*(1-(1-k/E)**n)*e
 HW={ # R8k tok/s, falloff p, alpha_W*W_peak (B/s), C tokens, b bytes/token, gpus
- 'H200 v0.27.1': dict(R=26701, p=-0.257, W=0.70*8*4.8e12, C=2209344, b=260096, g=8),
- 'B200 v0.28.0': dict(R=37217, p=-0.177, W=0.54*8*8.0e12, C=3403712, b=260096, g=8),
+ 'H200 v0.27.1': dict(R=26701, p=-0.257, W=0.70*8*4.8e12, C=2209344, b=253952, g=8),   # 2*62*8*128*2 for Qwen3-Coder-480B bf16; an earlier 260,096 here was a host-tier byte estimate
+ 'B200 v0.28.0': dict(R=37217, p=-0.177, W=0.54*8*8.0e12, C=3403712, b=253952, g=8),   # 2*62*8*128*2 for Qwen3-Coder-480B bf16; an earlier 260,096 here was a host-tier byte estimate
  'TPU7x x4 (fp8 KV)': dict(R=16444, p=-0.326, W=0.67*4*7.37e12, C=1150000, b=126976, g=4),
 }
 def ceiling(hw, I, O):
