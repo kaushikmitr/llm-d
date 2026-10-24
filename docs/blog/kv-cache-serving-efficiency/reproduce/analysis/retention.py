@@ -3,7 +3,7 @@
 A replica holds S sessions; each cycles: engine time (O decode steps of the step-time law, prefill spread into them)
 then a tool pause T_p during which its KV stays in HBM. Closed loop: S = n + lam*T_p, lam = n/(O*t(n)).
 R_ret(h) = throughput at S = S_max = C/L_held (all held sessions' KV in HBM), capped by R(h) (compute/bandwidth walls)."""
-import sys, io, contextlib, json
+import sys, io, contextlib, json, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 with contextlib.redirect_stdout(io.StringIO()):
     from ceilings import HW, wread, N_act
