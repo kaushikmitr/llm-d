@@ -8,7 +8,7 @@ b=253952; W=0.527*8*8.0e12; Ctok=3403712; TB=8192; FLOOR=0.0058; R8k=37217; p=-0
 rt.b=b; rt.P['b']=b; rt.P['W']=W; rt.W=W
 def step(I,O,h,n):
     U=(1-h)*I; L=I+O/2; Ftok=R8k*(I/8192)**p; pre=n*U/O
-    return max((c.wread(n+pre)+n*L*b+(pre/TB)*L*b)/W,(n+pre)/Ftok,FLOOR)
+    return max((c.wread(n+pre)+n*L*b+(pre/TB)*I*b)/W,(n+pre)/Ftok,FLOOR)
 def ceiling(I,O,h):
     L=I+O/2; nmax=int(Ctok/L); best=None
     for n in range(1,nmax+1):
