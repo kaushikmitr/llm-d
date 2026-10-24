@@ -43,7 +43,7 @@ One replica, same flags as the fleet.
 
 ## 3. Compute the ceiling
 
-`analysis/ceiling_v2.py` prints R per GPU and per fleet, the batch at which capacity binds, the compute share there, the paused-session KV the host tier must hold, the ideal throughput-against-batch curve, the two capacity walls, the Section 2.1 thresholds and the rule check. Hardware constants are in `analysis/ceilings.py` (`HW` table) and at the top of `ceiling_v2.py`; the workload's I, O and ρ are set there too. The expert-weight term counts every token in a step, decode and prefill alike.
+`analysis/ceiling_v2.py` is the authoritative script for every number in the post that comes from the model: R, the ideal curve, the three factors and the identity check, and the Section 2.1 rule check. `ceilings.py` and `kvmodel.py` are the earlier model from the white paper, kept for the H200 and TPU comparison rows; `round2_split_v2.py` is the earlier split against each run's own ceiling. Where they disagree with `ceiling_v2.py`, `ceiling_v2.py` is what the post reports. It prints R per GPU and per fleet, the batch at which capacity binds, the compute share there, the paused-session KV the host tier must hold, the ideal throughput-against-batch curve, the two capacity walls, the Section 2.1 thresholds and the rule check. Hardware constants are in `analysis/ceilings.py` (`HW` table) and at the top of `ceiling_v2.py`; the workload's I, O and ρ are set there too. The expert-weight term counts every token in a step, decode and prefill alike.
 
 ## 4. Sweep the load and split the shortfall
 
@@ -67,6 +67,6 @@ Analyse (`analysis/`):
 - `offload_levels_round2.py`: per level, hit rate in HBM and in the host tier, HBM occupancy, preemptions, running and waiting requests.
 - `flops_ai_offload.py <samples.csv> <t0> <t1>`: FLOP/s, HBM traffic and arithmetic intensity from the counters and the model shape; host-tier hits are not counted as recompute.
 - `harness_check.py <run dir> <sessions>`: what load the harness delivered (sessions in flight, idle beyond the tool pause).
-- `round2_split_v2.py <inputs.json> 253952`: the client, reuse and engine factors.
+- `round2_split_v2.py <inputs.json> 253952`: the earlier split, against each run's own ceiling; superseded by the split `ceiling_v2.py` prints against the one fleet ceiling, which is what the post reports.
 
 `results/` holds the per-level manifests, the summary tables and the decomposition inputs for the nine runs of the post. The per-request records (3 to 10 GB per level) are not included.

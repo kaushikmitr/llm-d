@@ -3,7 +3,7 @@ prefill chunk tokens and decode tokens. Finds, per (I, O, h), the largest
 sustainable request rate per replica and which resource binds.
 
 Resources: F (prefill FLOP/s, calibrated), W (HBM bandwidth, effective),
-C (HBM bytes for KV), T_b (prefill token budget per iteration), B (link).
+C (KV tokens the HBM allocation holds), T_b (prefill token budget per iteration), B (link).
 """
 import math, json, sys
 
