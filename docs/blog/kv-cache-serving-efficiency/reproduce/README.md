@@ -2,7 +2,7 @@
 
 ## Doing this for your own workload (Section 7 of the post)
 
-Four steps, each one script or one job, give η and its split for any workload on any deployment.
+This kit reproduces the B200 experiment of the post. The four steps below apply to any workload and deployment in principle, but the headline script, `analysis/ceiling_v2.py`, carries this experiment's values as constants: the B200 calibration, I, O and ρ, the nine run names with their hit rates and arithmetic intensities. Adapting it to another deployment means replacing those, and the trace step's oracle replay and the calibration jobs below are how the new values are obtained.
 
 1. **Characterise the trace.** From the per-request records: mean input and output lengths I and O, turns per session and the pause between them, and ρ from an oracle replay in which every prefix stays cached. Count ρ over the whole trace, each session's first turn included.
 2. **Calibrate the deployment.** Two jobs on one replica: prefill throughput at the trace's context, and the decode KV-read rate from the step-time difference between one and four long-context decodes. With KV bytes per token, HBM available for KV and weight bytes per step, that is all R needs (Appendix A).
