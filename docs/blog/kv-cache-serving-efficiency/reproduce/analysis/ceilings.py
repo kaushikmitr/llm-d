@@ -1,5 +1,5 @@
 """SUPERSEDED by ceiling_v2.py for every number in the post; kept for the H200 and TPU comparison rows. Ceilings for the agentic replay with the TRUE output length (harness max_tokens mean), per calibrated deployment."""
-import io, contextlib, sys, math; sys.path.insert(0,'.')
+import io, contextlib, sys, math, os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 with contextlib.redirect_stdout(io.StringIO()):
     from kvmodel import Replica, GiB
 N_act=35e9; N_tot=480e9; E,k=160,8; e=(N_tot-N_act)/(E-k); dense=N_act-k*e
