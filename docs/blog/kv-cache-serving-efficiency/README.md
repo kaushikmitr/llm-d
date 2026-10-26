@@ -42,19 +42,7 @@ Seen from the KV cache, these are facets of one placement problem.
 
 ## 2. Compute or memory: where a run sits on the roofline
 
-An engine serves requests in steps. One step is one forward pass over everything scheduled in it: a chunk of prefill tokens from prompts still being processed, plus one new token for every request that is decoding. A step takes the longer of its compute time and its memory time. This post calls that the step-time law. Section 2.1 gives the rule for which of the two it is, for a workload's ceiling and for a run. A run's side can also be read from its arithmetic intensity, computed from the engine's token counters and the model's per-token costs. The roofline chart below places the nine runs of Section 6 that way. The hit rate enters the rule only through U, the uncached input. ρ places the ceiling. A run's measured h places that run. The symbols used in this post, in one place:
-
-| Symbol | Meaning | Where it comes from |
-| --- | --- | --- |
-| I, O | mean input and output tokens per turn | the trace |
-| ρ | the workload's prefix overlap: the hit rate an oracle with unlimited cache reaches when it replays the whole trace (0.94 here); it builds the ceiling. Over the steady window alone the same oracle reaches 0.98, the value the per-run ideal of Section 4 uses | the trace |
-| h | the prefix-cache hit rate a run achieved over the steady window, counting HBM and host-tier hits | engine counters |
-| U | uncached input per turn, (1 − h)·I | h and I |
-| L | resident context per request, prompt plus output so far | the trace |
-| n | batch: the requests decoding together in one step on a replica | engine counters |
-| r | the ridge in token units: the KV tokens read in the time one prefill token is computed, at the calibration context; the chart's FLOP/B ridge is the same crossing in other units | hardware rates, Section 2.1 |
-| R | the ceiling: tokens per second per accelerator at h = ρ | step-time law, Appendix B |
-| η | achieved tokens per second per accelerator, over R | the load sweep |
+An engine serves requests in steps. One step is one forward pass over everything scheduled in it: a chunk of prefill tokens from prompts still being processed, plus one new token for every request that is decoding. A step takes the longer of its compute time and its memory time. This post calls that the step-time law. Section 2.1 gives the rule for which of the two it is, for a workload's ceiling and for a run. A run's side can also be read from its arithmetic intensity, computed from the engine's token counters and the model's per-token costs. The roofline chart below places the nine runs of Section 6 that way. The hit rate enters the rule only through U, the uncached input. ρ places the ceiling. A run's measured h places that run. Appendix A lists every symbol in one table.
 
 In every step a GPU does two things: it reads bytes from HBM and it does arithmetic on them. A decode step for a long context reads a lot, the weights and every resident context's KV, hundreds of gigabytes, and computes little, one token per request. It waits on memory. A prefill step computes a lot per byte it reads. It waits on compute. The roofline chart is the standard picture of which of the two a step waited on. The rest of this section applies it to a serving fleet, where the hit rate decides how much prefill each step carries.
 
@@ -281,6 +269,20 @@ The roofline framework reduces serving evaluation to one ratio, η. It splits th
 - [NVIDIA Dynamo KV cache aware routing](https://docs.nvidia.com/dynamo/user-guides/kv-cache-aware-routing)
 
 ## Appendix A. Inputs and calibration
+
+The post uses these symbols. The second table gives the inputs behind them and how each was obtained.
+
+| Symbol | Meaning | Where it comes from |
+| --- | --- | --- |
+| I, O | mean input and output tokens per turn | the trace |
+| ρ | the workload's prefix overlap: the hit rate an oracle with unlimited cache reaches when it replays the whole trace (0.94 here); it builds the ceiling. Over the steady window alone the same oracle reaches 0.98, the value the per-run ideal of Section 4 uses | the trace |
+| h | the prefix-cache hit rate a run achieved over the steady window, counting HBM and host-tier hits | engine counters |
+| U | uncached input per turn, (1 − h)·I | h and I |
+| L | resident context per request, prompt plus output so far | the trace |
+| n | batch: the requests decoding together in one step on a replica | engine counters |
+| r | the ridge in token units: the KV tokens read in the time one prefill token is computed, at the calibration context; the chart's FLOP/B ridge is the same crossing in other units | hardware rates, Section 2.1 |
+| R | the ceiling: tokens per second per accelerator at h = ρ | step-time law, Appendix B |
+| η | achieved tokens per second per accelerator, over R | the load sweep |
 
 | Symbol | Meaning | How it is obtained |
 | --- | --- | --- |
