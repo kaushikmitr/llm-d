@@ -100,7 +100,7 @@ The figure draws the rule for this deployment. For each context length and U/O i
 
 ![figure](figures/fig2-wall-map.png)
 
-*the smallest decoding concurrency n at which U/O > (L + W_b(n)/(n·b))/r − 1 holds, for the B200 deployment of Appendix A (r = 5,800, the ridge at this workload's context; W_b(n) from the expert-count formula of Appendix B, n capped by KV capacity and the engine's 64-sequence limit) · fleet runs from Section 6 placed by their measured hit rates (U = (1 − h)·I, h counting HBM and host-tier hits) · compute against bandwidth only; the capacity wall is a separate condition*
+*the smallest decoding concurrency n at which U/O > (L + W_b(n)/(n·b))/r − 1 holds, for the B200 deployment of Appendix A (r = 5,800, the ridge at this workload's context; W_b(n) from the expert-count formula of Appendix B, n capped by KV capacity and the engine's 64-sequence limit) · fleet runs from Section 6 placed by their measured hit rates (U = (1 − h)·I, h counting HBM and host-tier hits); the n beside each dot is that run's achieved batch, the mean requests decoding per replica over the steady window, not a target · compute against bandwidth only; the capacity wall is a separate condition*
 
 ## 3. The ceiling and η
 
