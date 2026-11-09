@@ -44,9 +44,25 @@ The industry has built specialised solutions at three layers of the stack:
 
 Seen from the KV cache, these are facets of one placement problem.
 
+### The workload
+
+In this post a workload is a trace of conversations. Each turn brings a prompt, receives an output, and pauses before the next. The framework reduces the trace to three numbers: the mean prompt length I, the mean output length O, and the intrinsic prefix overlap ρ, the share of prompt tokens a cache of unlimited size would find already computed. The turn count and the pause enter through the client term of Section 4. The post uses one workload throughout, an agentic coding trace replayed with inference-perf:
+
+| Trace parameter | Value |
+| --- | --- |
+| Turns per conversation | 20 |
+| Shared system prompt | 3,000 tokens |
+| Per-conversation prefix | about 160k tokens on average, lognormal, clipped to 10k to 200k |
+| New input per turn | about 1,500 tokens, plus the previous output |
+| Output per turn | about 425 tokens on average |
+| Tool pause between turns | 15 s on average, lognormal, 1 to 100 s |
+| Prefix overlap ρ | 0.94 over the whole trace; 0.98 over the steady window |
+
+Every number from Section 2 on refers to this trace.
+
 ## 2. Compute or memory: where a run sits on the roofline
 
-An engine serves requests in steps. One step is one forward pass over everything scheduled in it: a chunk of prefill tokens from prompts still being processed, plus one new token for every request that is decoding. A step takes the longer of its compute time and its memory time. This post calls that the step-time law. The next paragraph says why a step waits on one or the other.
+An engine serves requests in steps. One step is one forward pass over everything scheduled in it: a chunk of prefill tokens from prompts still being processed, plus one new token for every request that is decoding. A step takes the longer of its compute time and its memory time. This post calls that the step-time bound: a roofline applied to one step. The next paragraph says why a step waits on one or the other.
 
 In every step a GPU does two things. It reads bytes from HBM, and it does arithmetic on them. A decode step for a long context reads a lot: the weights and every resident context's KV, hundreds of gigabytes. It computes little, one token per request. It waits on memory. A prefill step computes a lot per byte it reads. It waits on compute. The roofline chart is the standard picture of which of the two a step waited on. The rest of this section applies it to a serving fleet, where the hit rate decides how much prefill each step carries.
 
@@ -102,19 +118,19 @@ $$
 \eta = \frac{\text{achieved tokens/s per accelerator}}{R}
 $$
 
-R comes from the step-time law. A replica's throughput is the most it can push through while every step stays within compute, bandwidth and HBM capacity (equations in Appendix B).
+R comes from the step-time bound. A replica's throughput is the most it can push through while every step stays within compute, bandwidth and HBM capacity (equations in Appendix B).
 
 R is an upper bound by construction. Its definition carries two assumptions. The hit rate is ρ, so any reuse the system fails to find, keep or share shows up as a shortfall. Paused sessions' KV costs nothing while it is out of HBM. A third assumption is that prefill is spread evenly over the steps rather than run in whole chunks. Smaller omissions are listed in Section 8.
 
 ### The ceiling for the B200 fleet
 
-On the B200 deployment calibrated in Appendix A, the agentic workload (I = 117k, O = 386, ρ = 0.94) has a ceiling of 27.6k tokens per second per GPU, or 1.33M for the six-replica fleet. It is capacity-bound. The figure draws the throughput the step-time law allows as the number of sequences decoding per replica grows. The line ends where their KV fills HBM, at 29 sequences. The line assumes HBM holds decoding sequences only.
+On the B200 deployment calibrated in Appendix A, the agentic workload (I = 117k, O = 386, ρ = 0.94) has a ceiling of 27.6k tokens per second per GPU, or 1.33M for the six-replica fleet. It is capacity-bound. The figure draws the throughput the step-time bound allows as the number of sequences decoding per replica grows. The line ends where their KV fills HBM, at 29 sequences. The line assumes HBM holds decoding sequences only.
 
 At the ceiling, about 23 sessions per replica are paused in a tool call at any moment. Their KV has to live somewhere else. A fleet whose HBM also held them would stop at 13 sequences and 0.69 of R. The host tier is what moves that wall.
 
 ![figure](figures/fig4c-ideal-throughput-vs-batch.png)
 
-*ideal curve from the step-time law of Appendix B at h = ρ for the B200 fleet of Appendix A; measured points from the nine runs of Section 6, at the mean number of requests decoding per replica over the steady window*
+*ideal curve from the step-time bound of Appendix B at h = ρ for the B200 fleet of Appendix A; measured points from the nine runs of Section 6, at the mean number of requests decoding per replica over the steady window*
 
 The measured runs show how far each stack climbed the line. llm-d at 120 sessions sits on it with six sequences decoding. At 180 and 240 it ran twelve and eighteen but fell below the line, as the engine's steps lengthened with chunked prefill, host-tier copies and then preemption. Dynamo and round-robin never pass twelve decoding. Their lost reuse turns added sessions into recompute. Section 4 splits these gaps into their factors.
 
@@ -124,7 +140,7 @@ The measured runs show how far each stack climbed the line. llm-d at 120 session
 
 In a closed loop the client controls two things. One is the number of sessions S it runs. The other is Z, how long each session sits idle between the server finishing a turn and the client sending the next. That is tool time plus anything else the client does. Neither needs the server to measure.
 
-Three per-turn service times enter. T is the measured time per turn. T\_ideal is what an engine that loses nothing would take over the same steady window, at the oracle's hit rate of 0.98: O decode steps, each at the step-time law's duration for the run's batch. It is not zero, since output comes one token per step. T\_h is the same quantity at the hit rate h the run achieved.
+Three per-turn service times enter. T is the measured time per turn. T\_ideal is what an engine that loses nothing would take over the same steady window, at the oracle's hit rate of 0.98: O decode steps, each at the step-time bound's duration for the run's batch. It is not zero, since output comes one token per step. T\_h is the same quantity at the hit rate h the run achieved.
 
 An engine that loses nothing would see each session cycle in Z + T\_ideal. The most this client could get from any server is therefore S(I + O)/(Z + T\_ideal). Little's law then gives η as a product of three factors:
 
@@ -142,11 +158,11 @@ The factors are not independent causes. Each is a ratio of cycle times under one
 
 ![figure](figures/fig3c-ceiling-split.png)
 
-*nine runs of Section 6 · each bar is client × R, what an engine that loses nothing would serve to that run's sessions; its parts are the achieved throughput (η × R), the engine loss (client × reuse × (1 − engine) × R) and the recompute loss (client × (1 − reuse) × R); the line is the one fleet ceiling R of Section 3 · Z and T from the per-request records over the steady window; T_ideal from the step-time law at the run's batch at the window oracle's 0.98, T_h the same at the run's h*
+*nine runs of Section 6 · each bar is client × R, what an engine that loses nothing would serve to that run's sessions; its parts are the achieved throughput (η × R), the engine loss (client × reuse × (1 − engine) × R) and the recompute loss (client × (1 − reuse) × R); the line is the one fleet ceiling R of Section 3 · Z and T from the per-request records over the steady window; T_ideal from the step-time bound at the run's batch at the window oracle's 0.98, T_h the same at the run's h*
 
 Reading down a stack's rows in the figure, more sessions lengthen the bar. What the added length turns into is the diagnosis. For llm-d it is throughput until HBM fills, then engine loss. For Dynamo and round-robin it is recompute from the first step. The extra sessions are recomputed rather than served. That is a routing limit, not a load limit.
 
-One limit of the attribution shows at small batches. The step-time law spreads prefill evenly over decode steps. At a small batch the recompute then hides under the memory time, and the reuse factor understates it. The loss lands in the engine factor instead. Dynamo at 60 sessions is the case: the hit rate is 0.76, but reuse reads 0.95 and engine 0.77. A low engine factor at a small batch should therefore be read with the hit rate beside it. Section 7 has the row.
+One limit of the attribution shows at small batches. The step-time bound spreads prefill evenly over decode steps. At a small batch the recompute then hides under the memory time, and the reuse factor understates it. The loss lands in the engine factor instead. Dynamo at 60 sessions is the case: the hit rate is 0.76, but reuse reads 0.95 and engine 0.77. A low engine factor at a small batch should therefore be read with the hit rate beside it. Section 7 has the row.
 
 Retention is not one of the factors. It sets where the peak falls: the number of sessions the system can hold before it starts evicting. It is reported beside η as a capacity.
 
@@ -174,17 +190,7 @@ Three stacks were evaluated on one six-replica NVIDIA B200 fleet running the age
 
 Each stack ran an ascending ladder of session counts until its throughput had fallen: llm-d at 120, 180, 240 and 300 sessions, Dynamo at 60, 90 and 120, round-robin at 90 and 120. Throughput is steady-state. η is taken at each stack's peak over its ladder (Section 3). The engines' counters were sampled every 15 s: uncached prefill tokens, tokens restored from the host tier, generated tokens, steps, resident and waiting requests, KV occupancy and preemptions. Achieved FLOP/s, HBM traffic and arithmetic intensity follow from them and the model shape. Every level ran on all six replicas, checked from each replica's own counters.
 
-The trace comes from inference-perf's conversation replay:
-
-| Trace parameter | Value |
-| --- | --- |
-| Turns per conversation | 20 |
-| Shared system prompt | 3,000 tokens |
-| Per-conversation prefix | about 160k tokens on average, lognormal, clipped to 10k to 200k |
-| New input per turn | about 1,500 tokens, plus the previous output |
-| Output per turn | about 425 tokens on average |
-| Tool pause between turns | 15 s on average, lognormal, 1 to 100 s |
-| Prefix overlap ρ | 0.94 over the whole trace; 0.98 over the steady window |
+The trace is the one described in Section 1, replayed with inference-perf's conversation replay.
 
 What each level delivered over the steady window, from the per-request records and the engine counters:
 
@@ -262,12 +268,12 @@ The procedure is four steps. Characterise the trace: I, O and ρ from an oracle 
 
 The factor below one says where the loss is. The counters recorded in the sweep say why. The table pairs each factor with the counter pattern that points to a cause and a lever. Read each row as a hypothesis to test, not as a verdict. A run can match more than one.
 
-| Factor below 1 | Hit rate vs ρ | HBM occupancy | Preemptions | Requests waiting | Step time vs the law | Cause | Lever |
+| Factor below 1 | Hit rate vs ρ | HBM occupancy | Preemptions | Requests waiting | Step time vs the bound | Cause | Lever |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Client | any | any | any | any | any | Sessions idle beyond their tool pause, or too few sessions offered | Mostly the load generator; fix it before concluding anything about the stack |
 | Reuse | below ρ from the lightest load | not full | none | any | any | Routing: turns land on replicas that do not hold their context, or the index does not see a tier | The index and the affinity rule, before buying memory |
 | Reuse | near ρ at light load, falls as sessions are added | filling | any | any | any | Retention: paused sessions' KV is evicted | A host tier, or fewer sessions per replica |
-| Engine | below ρ | not full | none | few | above | Recompute at a small batch: the step-time law spreads prefill under the memory time, so the loss lands in the engine factor rather than reuse (Dynamo at 60 sessions, Section 4) | Treat it as a reuse loss: the index and the affinity rule |
+| Engine | below ρ | not full | none | few | above | Recompute at a small batch: the step-time bound spreads prefill under the memory time, so the loss lands in the engine factor rather than reuse (Dynamo at 60 sessions, Section 4) | Treat it as a reuse loss: the index and the affinity rule |
 | Engine | near ρ | near full | yes | yes | above | Capacity: the decoding sessions' KV fills HBM | Fewer KV bytes per token, shorter contexts, a tier for everything not decoding |
 | Engine | near ρ | not full | none | yes | above | Scheduling: prefill chunks stall decodes, or tier copies sit in the critical path | Chunk size, admission, asynchronous copies |
 | Engine | near ρ | not full | none | none | above | The engine runs below its calibrated rates | Re-calibrate on this engine version; the engine itself |
@@ -315,7 +321,7 @@ The post uses these symbols. The second table gives the inputs behind them and h
 | L | resident context per request, prompt plus output so far | the trace |
 | n | batch: the requests decoding together in one step on a replica | engine counters |
 | r | the ridge in token units: the KV tokens read in the time one prefill token is computed, at the calibration context; the chart's FLOP/B ridge is the same crossing in other units | hardware rates, Section 2.1 |
-| R | the ceiling: tokens per second per accelerator at h = ρ | step-time law, Appendix B |
+| R | the ceiling: tokens per second per accelerator at h = ρ | step-time bound, Appendix B |
 | η | achieved tokens per second per accelerator, over R | the load sweep |
 
 | Symbol | Meaning | How it is obtained |
@@ -348,11 +354,11 @@ An 8 × H200 replica with vLLM v0.27.1 was calibrated the same way the day befor
 | α\_W | 0.70 of 38.4 TB/s | 0.53 of 64 TB/s | marginal KV-read bandwidth from the step-time increase between 1 and 4 concurrent 131k-token decodes |
 | Prefill interference | a decode step sharing its iteration with an 8k chunk takes about 310 ms (10 ms alone) | about 220 ms (7.6 ms alone) | 8 concurrent 131k-token requests; median TPOT 400 ms on H200, 259 ms on B200 while the others prefilled |
 
-## Appendix B. The step-time law and the ridge
+## Appendix B. The step-time bound and the ridge
 
 This appendix derives the ceiling R used throughout from the three costs of a step described in Section 3. It uses the symbols of Sections 2 and 3 and the calibrated inputs of Appendix A.
 
-### B.1 The step-time law
+### B.1 The step-time bound
 
 Engines run continuous batching with chunked prefill. One scheduler iteration holds up to T\_b tokens of prefill chunks plus one token for every sequence in decode, and runs them as one forward pass. Prefill and decode are not two pipelines with separate bounds. They share one iteration, and a prefill chunk lengthens the step for every decode sequence in it. The iteration is therefore the unit.
 
@@ -376,7 +382,7 @@ $$
 \lambda_c = \frac{F}{2N\,(U + O)}, \qquad \lambda_w = \frac{W}{b\,(O L + U I / T_b)}, \qquad \lambda_m = \frac{C}{\frac{W_b}{W}\left(O L + \frac{U I}{2 T_b}\right) + C\,\frac{b\,(O L + U I / T_b)}{W}}, \qquad R = \frac{(I + O)\,\min(\lambda_c, \lambda_w, \lambda_m)}{\text{accelerators per replica}}
 $$
 
-The closed forms and the kit agree, but they are not the same computation. ceiling\_v2.py does not evaluate λ\_m. It enumerates the batch n, applies the step-time law at each n, and stops at the largest integer n with n · c̄ ≤ C, counting decoding KV only. At the B200 point the closed form gives 1.889 requests per second per replica and the enumeration 1.887, with n = 29 against C/c̄ = 29.1. The in-flight prefill KV that the capacity constraint adds, n\_p/T\_b requests holding about I/2 each, is 0.11% of C here. The bandwidth constraint and λ\_w leave out the weight stream W\_b. They are the large-batch limit of the law. The kit keeps W\_b in every step. A reader implementing the closed forms should expect agreement with the kit to within about 0.2% at this workload, and should use the enumeration where the integer batch or the weight stream matters.
+The closed forms and the kit agree, but they are not the same computation. ceiling\_v2.py does not evaluate λ\_m. It enumerates the batch n, applies the step-time bound at each n, and stops at the largest integer n with n · c̄ ≤ C, counting decoding KV only. At the B200 point the closed form gives 1.889 requests per second per replica and the enumeration 1.887, with n = 29 against C/c̄ = 29.1. The in-flight prefill KV that the capacity constraint adds, n\_p/T\_b requests holding about I/2 each, is 0.11% of C here. The bandwidth constraint and λ\_w leave out the weight stream W\_b. They are the large-batch limit of the bound. The kit keeps W\_b in every step. A reader implementing the closed forms should expect agreement with the kit to within about 0.2% at this workload, and should use the enumeration where the integer batch or the weight stream matters.
 
 For a dense model that is the whole computation. For a mixture-of-experts model W\_b depends on how many tokens share a step. It is therefore evaluated at the tokens the solution implies: the n = λ\_m·O·t\_iter decoding tokens plus the n·U/O prefill tokens spread into the step. The pair converges in two or three iterations.
 
@@ -388,7 +394,7 @@ Two corrections apply. With a distribution of output lengths the resident contex
 
 The ridge is the point where the two measured roofs of Section 2 meet. In FLOP per byte it is the compute roof divided by the memory roof, F/W, about 290 on this deployment. Section 2.1 states the same crossing in token units, r = (W/b)/R\_pf: the number of KV tokens the memory system reads in the time the compute prefills one token. At this workload's 117k context, r is about 5,800.
 
-Both roofs use one FLOP convention. A token's FLOPs are 2N for the linear layers plus its attention over the context, 4 · layers · query heads · head dim · L. At 117k context that is 4.3 × 10¹¹ FLOPs per token, about six times 2N. The compute roof is the calibrated prefill rate at 128k, 22,794 tokens per second for the eight-GPU replica, times that count: 9.8 PFLOP/s for the replica, which is 1.22 PFLOP/s per GPU. The arithmetic intensity of each run in the chart is computed with the same count. The step-time law of B.1 does not count attention FLOPs explicitly. It keeps the 2N convention and lets the calibrated prefill rate fall with context instead. Its F is therefore α\_F F\_peak (I/8192)^p, and that is why Appendix A quotes α\_F as 0.15 of the bf16 peak at 8k. The two conventions give the same ridge: 290 FLOP/B × b × r = 4.3 × 10¹¹ FLOPs per token.
+Both roofs use one FLOP convention. A token's FLOPs are 2N for the linear layers plus its attention over the context, 4 · layers · query heads · head dim · L. At 117k context that is 4.3 × 10¹¹ FLOPs per token, about six times 2N. The compute roof is the calibrated prefill rate at 128k, 22,794 tokens per second for the eight-GPU replica, times that count: 9.8 PFLOP/s for the replica, which is 1.22 PFLOP/s per GPU. The arithmetic intensity of each run in the chart is computed with the same count. The step-time bound of B.1 does not count attention FLOPs explicitly. It keeps the 2N convention and lets the calibrated prefill rate fall with context instead. Its F is therefore α\_F F\_peak (I/8192)^p, and that is why Appendix A quotes α\_F as 0.15 of the bf16 peak at 8k. The two conventions give the same ridge: 290 FLOP/B × b × r = 4.3 × 10¹¹ FLOPs per token.
 
 Every quantity in this appendix is per replica of eight GPUs unless it says per GPU. b = 253,952 bytes is the KV of one token across the whole model: 2 · 62 layers · 8 KV heads · 128 · 2 bytes. At TP=8 each GPU holds one of the eight KV heads, 31,744 bytes per token, with no replication. W = 0.527 × 8 × 8 TB/s = 33.7 TB/s is the bandwidth of the eight GPUs together. C = 3,403,712 tokens is the KV capacity the engine reports for the replica. Each GPU holds its 31,744-byte shard of every one of those tokens, so C · b is 805 GiB across the replica, about 101 GiB per GPU. With these values, r = (33.7 × 10¹² / 253,952) / 22,794 = 132.8 × 10⁶ / 22,794 ≈ 5,830. Dividing both W and b by eight leaves r unchanged. The FLOP/B ridge is likewise the same per GPU and per replica: 1.22 PFLOP/s over 4.2 TB/s equals 9.76 PFLOP/s over 33.7 TB/s, about 290 either way.
 
