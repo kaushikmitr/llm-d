@@ -94,7 +94,7 @@ $$
 \frac{U}{O} > \frac{L + W_b(n)/(n\,b)}{r} - 1
 $$
 
-For the agentic workload (L = 117k, U = 7.3k, O = 386), U/O is 19 against a threshold of 30 at the ceiling's batch of 29. The workload is memory-bound. Capacity is not in the rule. It caps n and enters the ceiling as a separate condition (Appendix B).
+For the agentic workload (L = 117k, U = 7.3k, O = 386), U/O is 19 against a threshold of 30 at the ceiling's batch of 29 sequences, [derived in Appendix B.1](https://github.com/kaushikmitr/llm-d/blob/kv-cache-serving-efficiency-blog/docs/blog/kv-cache-serving-efficiency/README.md#b1-the-step-time-bound). The workload is memory-bound. Capacity is not in the rule. It caps n and enters the ceiling as a separate condition.
 
 The figure draws the rule for this deployment. For each context length and U/O it shows the smallest batch at which compute dominates. Grey marks where memory dominates at every batch the HBM can hold. llm-d's runs up to 240 sessions sit in the grey. Dynamo, round-robin and llm-d at 300 sessions sit in the blue. There compute dominates once three to eight requests share a step, and those runs had more than that decoding.
 
