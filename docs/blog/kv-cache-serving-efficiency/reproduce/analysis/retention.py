@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Retention-capped closed-loop ceiling for the B200 agentic fleet.
-A replica holds S sessions; each cycles: engine time (O decode steps of the step-time law, prefill spread into them)
+A replica holds S sessions; each cycles: engine time (O decode steps of the step-time bound, prefill spread into them)
 then a tool pause T_p during which its KV stays in HBM. Closed loop: S = n + lam*T_p, lam = n/(O*t(n)).
 R_ret(h) = throughput at S = S_max = C/L_held (all held sessions' KV in HBM), capped by R(h) (compute/bandwidth walls)."""
 import sys, io, contextlib, json, os
