@@ -7,7 +7,7 @@ export HARNESS_NODEPOOL=${HARNESS_NODEPOOL:-cpu-pool-3} HARNESS_CPU_NR=${HARNESS
 cd "$(dirname "$0")/.."   # reproduce/
 K="kubectl --context ${KUBE_CONTEXT:?set KUBE_CONTEXT} -n ${NAMESPACE:-kv-fleet}"
 ARM=${ARM:?}; LEVELS=${LEVELS:?}; OUT=results/${OUT_NAME:-$ARM}; mkdir -p $OUT
-case $ARM in llmd*) export BASE_URL=http://agentic-b200-epp.kv-fleet.svc:80; DEP=decode;; rr*) export BASE_URL=http://decode-rr.kv-fleet.svc:8000; DEP=decode;; dynamo*) export BASE_URL=http://dynamo-frontend.kv-fleet.svc:8000; DEP=dynamo-decode;; esac
+case $ARM in llmd*) export BASE_URL=http://agentic-b200-epp.kv-fleet.svc:80; DEP=decode;; rr*) export BASE_URL=http://decode-rr.kv-fleet.svc:8000; DEP=decode;; esac
 for i in $(seq 1 360); do R=$($K get deploy $DEP -o jsonpath='{.status.readyReplicas}' 2>/dev/null); [ "$R" = "6" ] && break; sleep 30; done; echo "$(date -u) $ARM ready replicas: $R"
 echo -e "conversations\tnum_requests\tseed\tstatus\texit\tresult_dir\tt0\tt1\tttft_med_s\tengine_hit\tsteady_tps\tcollapsed" > $OUT/manifest.tsv
 NONC=0
@@ -23,7 +23,7 @@ for C in $LEVELS; do
   read TTFT HIT TPS COL <<< "$(python3 analysis/judge_level.py $OUT/conc_$C results/metrics/samples.csv ${TTFT_COLLAPSE:-5} ${HIT_COLLAPSE:-0.6})"
   echo -e "$C\t$NUM_REQUESTS\t$SEED\t$([ $rc -eq 0 ] && echo DONE || echo FAIL)\t$rc\t$OUT/conc_$C\t$T0\t$T1\t$TTFT\t$HIT\t$TPS\t$COL" >> $OUT/manifest.tsv
   echo "$(date -u) === $ARM conc $C exit $rc | ttft_med $TTFT s, engine hit $HIT, steady $TPS tok/s, collapsed=$COL"
-  MINP=$(python3 harness/fleet_check.py results/metrics/samples.csv $( [ "$DEP" = "dynamo-decode" ] && echo dynamo || echo llmd ) $T0 $T1)
+  MINP=$(python3 harness/fleet_check.py results/metrics/samples.csv llmd $T0 $T1)
   if [ "$MINP" -lt 6 ]; then echo "$(date -u) === $ARM conc $C ran with only $MINP model servers at some point; $( [ $TRY = 1 ] && echo rerunning || echo 'keeping, flagged')"
     [ $TRY = 1 ] && { sed -i '$ d' $OUT/manifest.tsv; mv $OUT/conc_$C $OUT/conc_${C}_partial_fleet_$T0; continue; }
     sed -i '$ s/$/\tPARTIAL_FLEET/' $OUT/manifest.tsv; fi

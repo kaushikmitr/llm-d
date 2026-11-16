@@ -34,7 +34,7 @@ print(f"CEILING B: n* {n}, step {t*1e3:.1f} ms, R {Rg/1e3:.1f}k/GPU, {tps/1e3:.0
 for k in (12,16,18,20,22,24,29):
     U_=U; pre=k*U_/O; mem=(c.wread(k+pre)+k*(I+O/2)*b+(pre/TB)*I*b)/Wpk; comp=(k+pre)/Ftok(I)
     print(f"  n={k:2d} memory {mem*1e3:5.1f} ms compute {comp*1e3:5.1f} ms -> {'compute' if comp>mem else 'memory'} binds; fleet {k/max(mem,comp)*(I+O)/O*NREP/1e6:.2f}M")
-H={'llm-d 120':(604,.98),'llm-d 180':(622,.92),'llm-d 240':(570,.90),'llm-d 300':(345,.75),'Dynamo 60':(253,.76),'Dynamo 90':(287,.74),'Dynamo 120':(271,.67),'rr 90':(191,.62),'rr 120':(180,.53)}
+H={'llm-d 120':(604,.98),'llm-d 180':(622,.92),'llm-d 240':(570,.90),'llm-d 300':(345,.75),'rr 90':(191,.62),'rr 120':(180,.53)}
 print('eta (fleet ceiling B):',{k:round(v[0]*1e3/F,2) for k,v in H.items()})
 print('--- split: client * reuse * engine * orchestration = eta (T_ideal at h=0.98)')
 worst=0.0

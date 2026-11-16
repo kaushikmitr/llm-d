@@ -52,13 +52,12 @@ Deploy (`deploy/`):
 
 - `modelservers-offload.yaml`: six vLLM replicas with the 1.61 TB host tier. `/dev/shm` must be at least the tier size; `vllm_pin_backport.py` (mounted from a ConfigMap, run at container start) registers the tier in 64 GiB pieces, which vLLM 0.28 needs for tiers above 512 GiB under tensor parallelism.
 - `router-plugins.yaml`: the llm-d router config. `lruCapacityPerServer` is in the router's own block units; without a tokenizer the router counts 4 bytes as a token, so size it from the host tier in engine blocks times the trace's bytes per token over 4.
-- `dynamo-offload.yaml`, `dynamo-infra.yaml`: Dynamo workers and frontend. Keep `self_describing_kv_events` on so the router sees the host tier, and check the frontend log for `Rejected incompatible workers`: Dynamo admits only workers whose model directories match byte for byte.
 - `podmonitoring.yaml`, `make_dashboard.py` (`PROJECT` env): Cloud Monitoring scrape and dashboard.
 
 Run (`harness/`):
 
-- `ladder.sh`: `ARM=llmd|dynamo|rr OUT_NAME=<dir> LEVELS="120 180 240" TEMPLATE=harness/config.template.yaml bash harness/ladder.sh`. One level per session count; concurrency 4 × sessions, 20 turns per conversation, 32 worker processes (the inference-perf lockstep workaround); waits for six ready replicas and checks that all six reported.
-- `overnight2.sh`, `dynamo2.sh`, `dynamo3.sh`: the orchestration used, including the GPU swap to Dynamo and the admission and burst checks before its ladder.
+- `ladder.sh`: `ARM=llmd|rr OUT_NAME=<dir> LEVELS="120 180 240" TEMPLATE=harness/config.template.yaml bash harness/ladder.sh`. One level per session count; concurrency 4 × sessions, 20 turns per conversation, 32 worker processes (the inference-perf lockstep workaround); waits for six ready replicas and checks that all six reported.
+- `overnight2.sh`: the orchestration used for the llm-d and round-robin ladders.
 - `sample_metrics_offload.py <csv> 15`: scrapes every replica's vLLM counters every 15 s; needed for everything in step 4.
 - `fleet_check.py`: the fewest replicas reporting during a level.
 

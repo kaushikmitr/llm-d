@@ -2,7 +2,7 @@
 """Per-run inputs for retention.py from the per-request records and the engine-counter samples (steady window as judge_level.py)."""
 import json, glob, bisect, csv, collections, sys, os
 HERE=os.path.dirname(os.path.abspath(__file__)); RESULTS=os.environ.get('RESULTS', os.path.join(HERE,'..','results'))  # run dirs: RESULTS/<arm>/conc_<N>
-RUNS = [('llm-d 120',RESULTS+'/llmd_w32/conc_120','llmd',120,0.98),('llm-d 180',RESULTS+'/llmd_w32/conc_180','llmd',180,0.92),('llm-d 240',RESULTS+'/llmd_w32/conc_240','llmd',240,0.90),('llm-d 300',RESULTS+'/llmd_w32/conc_300','llmd',300,0.75),('Dynamo 60',RESULTS+'/dynamo_w32/conc_60','dynamo',60,0.76),('Dynamo 90',RESULTS+'/dynamo_w32/conc_90','dynamo',90,0.74),('Dynamo 120',RESULTS+'/dynamo_w32/conc_120','dynamo',120,0.67),('rr 90',RESULTS+'/rr_w32/conc_90','llmd',90,0.62),('rr 120',RESULTS+'/rr_w32/conc_120','llmd',120,0.53)]
+RUNS = [('llm-d 120',RESULTS+'/llmd_w32/conc_120','llmd',120,0.98),('llm-d 180',RESULTS+'/llmd_w32/conc_180','llmd',180,0.92),('llm-d 240',RESULTS+'/llmd_w32/conc_240','llmd',240,0.90),('llm-d 300',RESULTS+'/llmd_w32/conc_300','llmd',300,0.75),('rr 90',RESULTS+'/rr_w32/conc_90','llmd',90,0.62),('rr 120',RESULTS+'/rr_w32/conc_120','llmd',120,0.53)]
 
 samp = collections.defaultdict(list)
 for r in csv.DictReader(open(RESULTS+'/metrics/samples.csv')):

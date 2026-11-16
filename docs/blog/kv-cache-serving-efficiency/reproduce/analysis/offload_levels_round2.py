@@ -17,7 +17,7 @@ def window(d):
     o=subprocess.run(['python3',HERE+'/judge_level.py',d,f'{R}/metrics/samples.csv','5','0.6','window'],capture_output=True,text=True).stdout.split()
     return int(float(o[4])),int(float(o[5]))
 print(f"{'stack':7s}{'conv':>5s} | {'HBM hit':>7s} {'CPU hit':>7s} {'total':>6s} | {'HBM full':>8s} {'CPU full':>8s} | {'preempt/min':>11s} {'run':>5s} {'wait':>5s} | tok/s")
-for arm,k in (('llmd_w32','llmd'),('dynamo_w32','dynamo'),('rr_w32','llmd')):
+for arm,k in (('llmd_w32','llmd'),('rr_w32','llmd')):
     for r in sorted(csv.DictReader(open(f'{R}/{arm}/manifest.tsv'),delimiter='\t'),key=lambda r:int(r['conversations'])):
         c=r['conversations']; ws,we=window(f"{R}/{arm}/conc_{c}")
         q=h=lb=pre=0; hbm=[];cpu=[];run=[];wait=[]

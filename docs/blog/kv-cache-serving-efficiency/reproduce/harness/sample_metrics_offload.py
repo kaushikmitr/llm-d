@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Sample vLLM counters from every serving pod in kv-fleet every PERIOD seconds via the API-server proxy.
-One CSV row per pod per sample. Pods: llm-d decode (label llm-d.ai/role=decode, :8000/metrics) and
-Dynamo workers (label app=dynamo-decode, tries :8081 then :8000). Keys are the raw metric names."""
+One CSV row per pod per sample. Pods: llm-d decode (label llm-d.ai/role=decode, :8000/metrics). Keys are the raw metric names."""
 import subprocess, time, json, csv, os, re, sys
 K=os.environ.get('KUBECTL','kubectl'); CTX=os.environ['KUBE_CONTEXT']; NS='kv-fleet'
 OUT=sys.argv[1]; PERIOD=float(sys.argv[2]) if len(sys.argv)>2 else 15
-WANT=re.compile(r'^(vllm:(prefix_cache_queries_total|prefix_cache_hits_total|external_prefix_cache_queries_total|external_prefix_cache_hits_total|prompt_tokens_total|generation_tokens_total|num_requests_running|num_requests_waiting|kv_cache_usage_perc|iteration_tokens_total_count|iteration_tokens_total_sum|num_preemptions_total|request_prefill_time_seconds_sum|request_decode_time_seconds_sum|request_queue_time_seconds_sum|request_success_total)|dynamo_component_[a-z_]*(prefix_cache|prompt_tokens|generation_tokens|num_requests_running|kv_cache_usage|iteration_tokens)[a-z_]*|vllm:[a-z_]*(offload|kv_transfer|connector)[a-z_]*)\b')
+WANT=re.compile(r'^(vllm:(prefix_cache_queries_total|prefix_cache_hits_total|external_prefix_cache_queries_total|external_prefix_cache_hits_total|prompt_tokens_total|generation_tokens_total|num_requests_running|num_requests_waiting|kv_cache_usage_perc|iteration_tokens_total_count|iteration_tokens_total_sum|num_preemptions_total|request_prefill_time_seconds_sum|request_decode_time_seconds_sum|request_queue_time_seconds_sum|request_success_total)|vllm:[a-z_]*(offload|kv_transfer|connector)[a-z_]*)\b')
 def kube(*a):
     return subprocess.run([K,'--context',CTX,'-n',NS,*a],capture_output=True,text=True,timeout=60).stdout
 def pods():
     out=kube('get','pods','-l','llm-d.ai/role=decode','-o','jsonpath={range .items[*]}{.metadata.name},{.status.phase},llmd{"\\n"}{end}')
-    out+=kube('get','pods','-l','app=dynamo-decode','-o','jsonpath={range .items[*]}{.metadata.name},{.status.phase},dynamo{"\\n"}{end}')
-    return [tuple(l.split(',')) for l in out.splitlines() if l.endswith(('llmd','dynamo')) and ',Running,' in l]
+    return [tuple(l.split(',')) for l in out.splitlines() if l.endswith('llmd') and ',Running,' in l]
 def scrape(pod, ports):
     for p in ports:
         txt=kube('get','--raw',f'/api/v1/namespaces/{NS}/pods/{pod}:{p}/proxy/metrics')
