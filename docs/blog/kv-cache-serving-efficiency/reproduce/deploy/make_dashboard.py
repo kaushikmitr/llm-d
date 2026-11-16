@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cloud Monitoring dashboard for the kv-fleet benchmark: llm-d vs Dynamo engines, both routers, GPUs."""
+"""Cloud Monitoring dashboard for the kv-fleet benchmark: llm-d engines, the router, GPUs."""
 import json
 NS='namespace="kv-fleet"'
 W=[]; y=0
@@ -15,10 +15,10 @@ def row(*charts):
         W.append({"xPos":i*w,"yPos":y,"height":16,"width":w,"widget":{"title":title,"xyChart":{"chartOptions":{"mode":"COLOR"},"dataSets":ds,"yAxis":{"scale":"LINEAR"}}}})
     y+=16
 def q(p,expr): return f'histogram_quantile({p}, sum by (le, job, ${{__groupby}}) (rate({expr}[2m])))'
-V=f'job=~"llmd-vllm|dynamo-workers",{NS}'
+V=f'job="llmd-vllm",{NS}'
 W.append({"yPos":0,"height":6,"width":48,"widget":{"title":"","text":{"format":"MARKDOWN","content":
- "### KV fleet: llm-d vs Dynamo on B200\nEngines are vLLM in both stacks, split by `job`: **llmd-vllm** = llm-d model servers, **dynamo-workers** = Dynamo workers. "
- "Router sections are stack-specific. Scrape configs: `~/kv-whitepaper/fleet/podmonitoring.yaml`."}}}); y=6
+ "### KV fleet: llm-d on B200\nEngines are vLLM, `job` **llmd-vllm** = llm-d model servers (also used by the round-robin arm). "
+ "Scrape configs: `~/kv-whitepaper/fleet/podmonitoring.yaml`."}}}); y=6
 sec("Throughput and reuse","Per stack, summed over replicas")
 row(("Tokens / s (prompt + generated)",[("{{job}}",f'sum by (job, ${{__groupby}}) (rate(vllm:prompt_tokens_total{{{V}}}[2m]) + rate(vllm:generation_tokens_total{{{V}}}[2m]))')],""),
     ("Generated tokens / s",[("{{job}}",f'sum by (job, ${{__groupby}}) (rate(vllm:generation_tokens_total{{{V}}}[2m]))')],""))
@@ -53,19 +53,13 @@ row(("llm-d: router-predicted vs engine-measured prefix hit (token-weighted)",[
     ("engine actual, HBM only",f'sum by (${{__groupby}}) (rate(vllm:prefix_cache_hits_total{{{L}}}[2m])) / sum by (${{__groupby}}) (rate(vllm:prefix_cache_queries_total{{{L}}}[2m]))')],"10^2.%"))
 row(("Prefix index entries (all servers)",[("entries",f'sum by (${{__groupby}}) (llm_d_epp_prefix_indexer_size{{{R}}})')],""),
     ("Time to first token (router)",[("p50",f'histogram_quantile(0.5, sum by (le, ${{__groupby}}) (rate(llm_d_epp_request_ttft_seconds_bucket{{{R}}}[2m])))'),("p90",f'histogram_quantile(0.9, sum by (le, ${{__groupby}}) (rate(llm_d_epp_request_ttft_seconds_bucket{{{R}}}[2m])))')],"s"))
-D=f'job="dynamo-frontend",{NS}'
-sec("Dynamo frontend and KV router")
-row(("Requests / s",[("requests",f'sum by (${{__groupby}}) (rate(dynamo_component_router_requests_total{{{D}}}[2m]))')],""),
-    ("Router KV hit rate (per request)",[("p50",f'histogram_quantile(0.5, sum by (le, ${{__groupby}}) (rate(dynamo_component_router_kv_hit_rate_bucket{{{D}}}[2m])))'),("mean",f'sum by (${{__groupby}}) (rate(dynamo_component_router_kv_hit_rate_sum{{{D}}}[2m])) / sum by (${{__groupby}}) (rate(dynamo_component_router_kv_hit_rate_count{{{D}}}[2m]))')],""))
-row(("Time to first token (router)",[("p50",f'histogram_quantile(0.5, sum by (le, ${{__groupby}}) (rate(dynamo_component_router_time_to_first_token_seconds_bucket{{{D}}}[2m])))'),("p90",f'histogram_quantile(0.9, sum by (le, ${{__groupby}}) (rate(dynamo_component_router_time_to_first_token_seconds_bucket{{{D}}}[2m])))')],"s"),
-    ("Router queue: pending requests",[("pending",f'sum by (${{__groupby}}) (dynamo_frontend_router_queue_pending_requests{{{D}}})')],""))
 G=f'{NS}'
 sec("GPUs (DCGM)","Pods in kv-fleet")
 row(("GPU utilisation",[("{{pod}}",f'avg by (pod, ${{__groupby}}) (DCGM_FI_DEV_GPU_UTIL{{{G}}})')],"%"),
     ("HBM bandwidth active",[("{{pod}}",f'avg by (pod, ${{__groupby}}) (DCGM_FI_PROF_DRAM_ACTIVE{{{G}}})')],"10^2.%"))
 row(("GPU power",[("{{pod}}",f'sum by (pod, ${{__groupby}}) (DCGM_FI_DEV_POWER_USAGE{{{G}}})')],"W"),
     ("HBM used",[("{{pod}}",f'sum by (pod, ${{__groupby}}) (DCGM_FI_DEV_FB_USED{{{G}}})')],"MiBy"))
-dash={"displayName":"KV fleet: llm-d vs Dynamo (B200)","mosaicLayout":{"columns":48,"tiles":W},
+dash={"displayName":"KV fleet: llm-d (B200)","mosaicLayout":{"columns":48,"tiles":W},
       "dashboardFilters":[{"filterType":"RESOURCE_LABEL","labelKey":"cluster","valueType":"STRING"},{"filterType":"RESOURCE_LABEL","labelKey":"namespace","valueType":"STRING"}]}
 json.dump(dash,open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'dashboard-kv-fleet.json'),'w'),indent=1)
 print(len(W),'tiles')
