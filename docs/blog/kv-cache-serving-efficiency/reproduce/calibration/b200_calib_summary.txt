@@ -8,3 +8,12 @@ agentic ceiling (I=121425,O=1101,rho=0.938): 10.6k tok/s/GPU, 85k/replica, capac
 --- rerun on vllm/vllm-openai:v0.28.0 (Dynamo v1.5.0 pin), 2026-10-11 19:13-19:40 UTC
 prefill 37217 / 33631 / 22794 tok/s at 8k/32k/128k; C 3,403,712 tokens (unchanged)
 decode TPOT ms: 1k/c1 5.79, 1k/c8 8.58, 131k/c1 7.57, 131k/c4 10.44, 131k/c8 259
+--- steady-batch ladder, 2026-11-16 (cluster107 spot B200 node, vllm/vllm-openai:v0.28.0, same flags; calibration/steady_ladder.py; raw in results/calib-2026-11-16/)
+GPU KV cache 3,403,712 tokens (unchanged). 1k/c1 5.70 ms; 117k/c1 7.49 (Oct: 7.57); 117k/c4 9.83 (Oct 131k/c4: 10.44).
+pure decode at ctx 116,684, steady window, step median ms: n=8 12.67 | 12 16.58 | 18 20.40 | 24 22.38 | 27 25.62
+fit n>=8: step = 6.82 ms + (W_b(n) + n*L*b) / 64.4 TB/s  -> the engine streams at the datasheet rate; alpha_W = 1.0 above a batch of 8.
+  The 0.53 alpha_W above came from the 1-to-4 marginal slope, which sits inside the fixed step cost; superseded.
+interference: 18 decoders at 117k + continuous cold 117k prefill stream: decoders' step mean 226 ms (median 262, p90 435); 60% of steps carried a
+  full 8k chunk; chunk-step 364 ms vs 352 ms pure prefill compute; decode-only steps 20.4 ms; prefill 21,668 tok/s (23,716 alone). Chunk steps serialize.
+ceiling B (analysis/ceiling_v3.py): datasheet bandwidth, calibrated prefill rate, max(memory, compute): n* 20 (flat to the capacity cap 29), step 17.0 ms at 20 / 24.7 ms at 29,
+  R 44.5k tok/s/GPU, 356k/replica, fleet 2.137M; closed form F(I)(I+O)/(O+U). Engine layer: 6.8 ms + bytes/64.4 TB/s per decode step + 364 ms per 8k chunk step.

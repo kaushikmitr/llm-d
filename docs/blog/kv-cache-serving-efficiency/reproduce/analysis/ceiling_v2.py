@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Ceiling with the all-tokens expert convention: W_b evaluated at the tokens in a step, n decode + n*U/O prefill (prefill spread evenly).
+"""SUPERSEDED by ceiling_v3.py (datasheet bandwidth + measured engine layer); kept for the record of Draft v0.5.
+Ceiling with the all-tokens expert convention: W_b evaluated at the tokens in a step, n decode + n*U/O prefill (prefill spread evenly).
 Outputs R, per-run own-I ceilings, the split table, the ideal throughput-vs-n curve, the two capacity walls, the 2.1 thresholds and the rule check."""
 import sys,io,contextlib,json,os
 HERE=os.path.dirname(os.path.abspath(__file__))
