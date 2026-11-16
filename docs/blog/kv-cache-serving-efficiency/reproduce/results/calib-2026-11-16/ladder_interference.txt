@@ -1,0 +1,4 @@
+CASE ctx=116684 conc=18: TTFT median=46.1s max=92.8s | steady window 269.3s, 21454 tokens | step median=261.58 ms mean=225.77 p90=434.61 | decode 80 tok/s (= 6k tok/s with prompt tokens credited) | whole-run median=275.36 ms
+RESULT ctx=116684 conc=18 out=1500 steady_ms=261.582 steady_mean_ms=225.769 steady_p90_ms=434.609 window_s=269.3 decode_tps=79.7 whole_ms=275.359 ttft_med_s=46.10
+  prefill stream: 62 prompts total, 50 fully inside window -> 21668 prefill tok/s; 52 overlapping window; mean prompt latency 6.5s
+RESULT_PREFILL ctx=116684 conc=18 prefill_tps=21668.0 prompts=62
