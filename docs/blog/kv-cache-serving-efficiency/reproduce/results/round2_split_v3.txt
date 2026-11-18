@@ -1,0 +1,23 @@
+CEILING B: n* 20, step 17.0 ms, R 44.5k/GPU, 356k/replica, fleet 2.137M; closed form F(I)(I+O)/(O+U) = 44.5k/GPU; capacity cap n = 29
+  n=12 memory  13.1 ms compute  10.2 ms -> memory binds; fleet 1.67M
+  n=16 memory  14.9 ms compute  13.6 ms -> memory binds; fleet 1.95M
+  n=18 memory  15.9 ms compute  15.3 ms -> memory binds; fleet 2.06M
+  n=20 memory  16.8 ms compute  17.0 ms -> compute binds; fleet 2.14M
+  n=22 memory  17.7 ms compute  18.7 ms -> compute binds; fleet 2.14M
+  n=24 memory  18.7 ms compute  20.4 ms -> compute binds; fleet 2.14M
+  n=29 memory  21.0 ms compute  24.7 ms -> compute binds; fleet 2.14M
+eta (fleet ceiling B): {'llm-d 120': 0.28, 'llm-d 180': 0.29, 'llm-d 240': 0.27, 'llm-d 300': 0.16, 'KV-load router 60': 0.12, 'KV-load router 90': 0.13, 'KV-load router 120': 0.13, 'rr 90': 0.09, 'rr 120': 0.08}
+--- split: client * reuse * engine * orchestration = eta (T_ideal at h=0.98)
+llm-d 120   S 120 n  5.9 Z  17.5 T_id   4.1 T_h   4.1 T_eng   5.7 T   8.9 | client 0.35 reuse 1.00 execution 0.82 (= engine 0.93 x orch 0.88) | eta 0.28 meas 0.28
+llm-d 180   S 180 n 11.9 Z  16.4 T_id   5.3 T_h   5.8 T_eng  11.8 T  22.4 | client 0.52 reuse 0.98 execution 0.57 (= engine 0.79 x orch 0.73) | eta 0.29 meas 0.29
+llm-d 240   S 240 n 18.1 Z  20.0 T_id   6.8 T_h  10.5 T_eng  18.1 T  34.3 | client 0.54 reuse 0.88 execution 0.56 (= engine 0.80 x orch 0.70) | eta 0.27 meas 0.27
+llm-d 300   S 300 n 20.9 Z  26.8 T_id   7.5 T_h  32.8 T_eng  39.5 T  95.0 | client 0.57 reuse 0.57 execution 0.49 (= engine 0.90 x orch 0.54) | eta 0.16 meas 0.16
+KV-load router 60 S  60 n  4.0 Z  16.8 T_id   3.4 T_h   5.9 T_eng  10.1 T  15.2 | client 0.19 reuse 0.89 execution 0.71 (= engine 0.84 x orch 0.84) | eta 0.12 meas 0.12
+KV-load router 90 S  90 n  7.5 Z  16.0 T_id   4.2 T_h  10.0 T_eng  15.0 T  21.1 | client 0.25 reuse 0.78 execution 0.70 (= engine 0.84 x orch 0.83) | eta 0.13 meas 0.13
+KV-load router 120 S 120 n 11.4 Z  21.0 T_id   5.2 T_h  21.5 T_eng  27.0 T  36.2 | client 0.28 reuse 0.62 execution 0.74 (= engine 0.89 x orch 0.84) | eta 0.13 meas 0.13
+rr 90       S  90 n  7.7 Z  19.8 T_id   4.1 T_h  14.4 T_eng  19.3 T  34.0 | client 0.20 reuse 0.70 execution 0.64 (= engine 0.87 x orch 0.73) | eta 0.09 meas 0.09
+rr 120      S 120 n 10.8 Z  27.6 T_id   5.1 T_h  27.8 T_eng  33.2 T  55.9 | client 0.22 reuse 0.59 execution 0.66 (= engine 0.91 x orch 0.73) | eta 0.08 meas 0.08
+identity check: worst |client*reuse*execution / measured eta - 1| = 0.00026
+--- ideal curve (fleet k tok/s) at h=rho vs n: [(1, 342), (2, 487), (3, 639), (4, 788), (5, 930), (6, 1063), (7, 1185), (8, 1298), (9, 1402), (10, 1498), (11, 1587), (12, 1670), (13, 1747), (14, 1819), (15, 1886), (16, 1949), (17, 2009), (18, 2064), (19, 2117), (20, 2137), (21, 2137), (22, 2137), (23, 2137), (24, 2137), (25, 2137), (26, 2137), (27, 2137), (28, 2137), (29, 2137)]
+--- engine-layer curve (fleet k tok/s) at h=rho vs n: [(4, 541), (8, 743), (12, 857), (18, 965), (24, 1039), (29, 1086)]
+HBM-only wall n = 7 sessions/replica 30.2
