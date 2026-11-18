@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Client x reuse x engine split (Section 4.2 definitions) for runs in an inputs json (retention_inputs / round2_inputs)."""
+"""Client x reuse x engine split (Section 3.2 definitions) for runs in an inputs json (retention_inputs / round2_inputs)."""
 import sys, json, io, contextlib
 _argv=sys.argv; sys.argv=[sys.argv[0]]  # kvmodel writes to sys.argv[1] on import
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
