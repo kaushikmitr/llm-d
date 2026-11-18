@@ -1,0 +1,10 @@
+CASE ctx=1024 conc=1: TTFT median=0.2s max=0.2s | steady window 80.7s, 4999 tokens | step median=16.08 ms mean=16.09 p90=16.52 | decode 62 tok/s (= 0k tok/s with prompt tokens credited) | whole-run median=16.08 ms
+RESULT ctx=1024 conc=1 out=5000 steady_ms=16.077 steady_mean_ms=16.091 steady_p90_ms=16.524 window_s=80.7 decode_tps=62.0 whole_ms=16.077 ttft_med_s=0.22
+CASE ctx=116684 conc=1: TTFT median=10.0s max=10.0s | steady window 105.8s, 4998 tokens | step median=21.16 ms mean=21.17 p90=21.80 | decode 47 tok/s (= 1k tok/s with prompt tokens credited) | whole-run median=21.16 ms
+RESULT ctx=116684 conc=1 out=5000 steady_ms=21.161 steady_mean_ms=21.166 steady_p90_ms=21.802 window_s=105.8 decode_tps=47.3 whole_ms=21.161 ttft_med_s=9.98
+CASE ctx=116684 conc=2: TTFT median=13.2s max=17.4s | steady window 109.2s, 9969 tokens | step median=21.91 ms mean=21.91 p90=22.63 | decode 91 tok/s (= 2k tok/s with prompt tokens credited) | whole-run median=21.91 ms
+RESULT ctx=116684 conc=2 out=5000 steady_ms=21.910 steady_mean_ms=21.909 steady_p90_ms=22.633 window_s=109.2 decode_tps=91.3 whole_ms=21.910 ttft_med_s=13.24
+CASE ctx=116684 conc=4: TTFT median=22.8s max=36.5s | steady window 115.4s, 19824 tokens | step median=22.22 ms mean=23.29 p90=23.05 | decode 172 tok/s (= 4k tok/s with prompt tokens credited) | whole-run median=22.22 ms
+RESULT ctx=116684 conc=4 out=5000 steady_ms=22.221 steady_mean_ms=23.288 steady_p90_ms=23.049 window_s=115.4 decode_tps=171.8 whole_ms=22.224 ttft_med_s=22.82
+CASE ctx=116684 conc=8: TTFT median=47.1s max=84.8s | steady window 126.8s, 39202 tokens | step median=25.88 ms mean=25.88 p90=27.08 | decode 309 tok/s (= 8k tok/s with prompt tokens credited) | whole-run median=25.88 ms
+RESULT ctx=116684 conc=8 out=5000 steady_ms=25.875 steady_mean_ms=25.877 steady_p90_ms=27.078 window_s=126.8 decode_tps=309.2 whole_ms=25.878 ttft_med_s=47.07
