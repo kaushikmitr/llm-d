@@ -1,15 +1,15 @@
 # Reproducing the measurement
 
-## Doing this for your own workload (Section 7 of the post)
+## Doing this for your own workload (Section 5 of the post)
 
 This kit reproduces the B200 experiment of the post. The four steps below apply to any workload and deployment in principle, but the headline script, `analysis/ceiling_v3.py`, carries this experiment's values as constants: the B200 calibration, I, O and ρ, the nine run names with their hit rates and arithmetic intensities. Adapting it to another deployment means replacing those, and the trace step's oracle replay and the calibration jobs below are how the new values are obtained.
 
 1. **Characterise the trace.** From the per-request records: mean input and output lengths I and O, turns per session and the pause between them, and ρ from an oracle replay in which every prefix stays cached. Count ρ over the whole trace, each session's first turn included.
 2. **Calibrate the deployment.** Two jobs on one replica: prefill throughput at the trace's context, and a steady-batch decode ladder at that context. The ladder's slope of step time against bytes read is the HBM rate the engine reaches (the datasheet rate on this B200 deployment above a batch of eight); its intercept is the engine's fixed cost per step, and an interference rung gives the cost of a step that carries a full prefill chunk. With KV bytes per token, HBM available for KV and weight bytes per step, that is all R and the engine layer need (Appendix A).
 3. **Compute R and what binds.** The closed form of Appendix B, or the step-time bound iterated over the batch. If capacity binds, note the batch at the wall and the KV the paused sessions need outside HBM: turn rate × pause × context. That number sizes a host tier before one is bought.
-4. **Sweep the load and split the shortfall.** Run an ascending ladder of session counts; at each level take the steady window and record the hit rate in every tier, HBM occupancy, running and waiting requests, preemptions, step rate, and per-request Z and T. η is the peak over R; client, reuse, engine and orchestration follow from Section 4, the engine factor from the ladder of step 2. The counters also say which wall a saturated run is on: requests waiting for KV blocks mean capacity; step time growing with the number and length of resident contexts, with HBM traffic near the calibrated bandwidth, means bandwidth; steps filled with prefill chunks at the calibrated prefill rate, with HBM traffic low, mean compute.
+4. **Sweep the load and split the shortfall.** Run an ascending ladder of session counts; at each level take the steady window and record the hit rate in every tier, HBM occupancy, running and waiting requests, preemptions, step rate, and per-request Z and T. η is the peak over R; client, reuse, engine and orchestration follow from Section 4.2, the engine factor from the ladder of step 2. The counters also say which wall a saturated run is on: requests waiting for KV blocks mean capacity; step time growing with the number and length of resident contexts, with HBM traffic near the calibrated bandwidth, means bandwidth; steps filled with prefill chunks at the calibrated prefill rate, with HBM traffic low, mean compute.
 
-The split of Section 4 of the post gives four factors, client, reuse, engine and orchestration, whose product is η; the one below one says where the loss is, and the counters recorded in step 4 say why. Read the row for each factor that is below one; a run can match more than one.
+The split of Section 4.2 of the post gives four factors, client, reuse, engine and orchestration, whose product is η; the one below one says where the loss is, and the counters recorded in step 4 say why. Read the row for each factor that is below one; a run can match more than one.
 
 | Factor below 1 | Hit rate vs ρ | HBM occupancy | Preemptions | Requests waiting | Step time vs the law | Cause | Lever |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -22,10 +22,10 @@ The split of Section 4 of the post gives four factors, client, reuse, engine and
 | Orchestration | near ρ | not full | none | none | above the measured engine's step | The engine runs below its calibrated rates | Re-calibrate on this engine version; the engine itself |
 | None | near ρ | any | any | any | at | At the ceiling | Compare deployments, not stacks |
 
-Section 6 of the post is this procedure applied once; the scripts below are what ran it.
+Section 4.3 of the post is this procedure applied once; the scripts below are what ran it.
 
 ## Scripts, by step
-Everything used for the post, arranged by the four steps of its Section 7. Paths below are relative to this folder. Set `KUBE_CONTEXT` (and `NAMESPACE`, default `kv-fleet`) before running anything that talks to a cluster.
+Everything used for the post, arranged by the four steps of its Section 5. Paths below are relative to this folder. Set `KUBE_CONTEXT` (and `NAMESPACE`, default `kv-fleet`) before running anything that talks to a cluster.
 
 ## 1. Characterise the trace
 
@@ -44,7 +44,7 @@ One replica, same flags as the fleet.
 
 ## 3. Compute the ceiling
 
-`analysis/ceiling_v3.py [inputs.json]` (default `results/round2_inputs.json`, or `$INPUTS`; runs from any directory) is the authoritative script for every number in the post that comes from the model: R at the datasheet bandwidth and the calibrated prefill rate, which term binds at each batch, the ideal curve, the measured engine layer, the four factors (client, reuse, engine, orchestration) and the identity check. `ceiling_v2.py` is the earlier version with the 0.53 bandwidth fraction; `ceilings.py` and `kvmodel.py` are the earlier model from the white paper, kept for the H200 and TPU comparison rows; `round2_split_v2.py` is the earlier split against each run's own ceiling. Where they disagree with `ceiling_v3.py`, `ceiling_v3.py` is what the post reports. It prints R per GPU and per fleet, the batch at which capacity binds, the compute share there, the paused-session KV the host tier must hold, the ideal throughput-against-batch curve, the two capacity walls, the Section 2.1 thresholds and the rule check. Hardware constants are in `analysis/ceilings.py` (`HW` table) and at the top of `ceiling_v2.py`; the workload's I, O and ρ are set there too. The expert-weight term counts every token in a step, decode and prefill alike.
+`analysis/ceiling_v3.py [inputs.json]` (default `results/round2_inputs.json`, or `$INPUTS`; runs from any directory) is the authoritative script for every number in the post that comes from the model: R at the datasheet bandwidth and the calibrated prefill rate, which term binds at each batch, the ideal curve, the measured engine layer, the four factors (client, reuse, engine, orchestration) and the identity check. `ceiling_v2.py` is the earlier version with the 0.53 bandwidth fraction; `ceilings.py` and `kvmodel.py` are the earlier model from the white paper, kept for the H200 and TPU comparison rows; `round2_split_v2.py` is the earlier split against each run's own ceiling. Where they disagree with `ceiling_v3.py`, `ceiling_v3.py` is what the post reports. It prints R per GPU and per fleet, the batch at which capacity binds, the compute share there, the paused-session KV the host tier must hold, the ideal throughput-against-batch curve, the two capacity walls, the Appendix B.3 thresholds and the rule check. Hardware constants are in `analysis/ceilings.py` (`HW` table) and at the top of `ceiling_v2.py`; the workload's I, O and ρ are set there too. The expert-weight term counts every token in a step, decode and prefill alike.
 
 ## 4. Sweep the load and split the shortfall
 
