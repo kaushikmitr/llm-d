@@ -1,0 +1,11 @@
+{
+ "R8k": 23573,
+ "R32k": 20591,
+ "R128k": 12937,
+ "p": -0.193,
+ "C": 1350144,
+ "chips": 8,
+ "Wpk_per_chip": 7370000000000.0,
+ "kv_replication": 2,
+ "_note": "8-chip TP=16 2-host replica (pair A), 2026-11-18 00:22-00:24 UTC; C from the startup log; kv_replication 2: 8 KV heads over 16 devices"
+}

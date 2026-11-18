@@ -1,0 +1,19 @@
+using seed=1794961344469476101
+endpoint=http://kv-tpu-16a-leader.kv-tpu.svc:8000 model=Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8 chunk=32768
+warmup=3 measurements=8
+  warmup 1: TTFT=1.5995s
+  warmup 2: TTFT=1.5892s
+  warmup 3: TTFT=1.6839s
+  measure 1: TTFT=1.5904s
+  measure 2: TTFT=1.5853s
+  measure 3: TTFT=1.6029s
+  measure 4: TTFT=1.5924s
+  measure 5: TTFT=1.7900s
+  measure 6: TTFT=1.5888s
+  measure 7: TTFT=1.5864s
+  measure 8: TTFT=1.6114s
+
+T(B)    = 1.5914s
+R_peak  = 20591 tokens/sec
+PEAK_PREFILL_THROUGHPUT=20591
+TAU=1235465
