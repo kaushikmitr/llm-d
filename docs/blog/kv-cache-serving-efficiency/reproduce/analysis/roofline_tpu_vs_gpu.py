@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Roofs-only roofline of one replica on 8 x B200 (TP=8) and 8 x TPU7x (TP=16): the Section 2 figure of the KV Cache-Miss Tax post.
-Deployment roof = the calibrated 128k-prompt prefill rate (Appendix A) times the 4.3e11 FLOPs per token of Appendix B.2 (2N plus attention at
-this workload's context), per accelerator; bandwidth = what the decode ladder reached. Datasheet roofs dashed. Usage: roofline_tpu_vs_gpu.py out.png"""
+Deployment roof = the calibrated 128k-prompt prefill rate (Appendix A) times the FLOPs per token of Appendix B.2 (2N plus attention at this workload's context, 4.26e11), per accelerator; bandwidth = what the decode ladder reached. Datasheet roofs dashed. Usage: roofline_tpu_vs_gpu.py out.png"""
 import sys, numpy as np, matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-FLOP_TOK = 4.3e11
+N_ACT, L, HQ, DH = 35e9, 62, 96, 128; CTX = 116684 + 386 / 2
+FLOP_TOK = 2 * N_ACT + 4 * L * HQ * DH * CTX   # 2N plus attention over the resident context (Appendix B.2): 4.26e11
 PLAT = {'B200': dict(acc=8, F_peak=4.5e15, W_peak=8e12, R128k=22794, W_dep=8e12, color='#2a78d6', label='8 x B200, TP=8'),
         'TPU7x': dict(acc=8, F_peak=4.6e15, W_peak=7.37e12, R128k=12937, W_dep=49.8e12/8, color='#eb6834', label='8 x TPU7x, TP=16')}
 plt.rcParams.update({'font.family': 'DejaVu Sans', 'font.size': 11, 'axes.edgecolor': '#c3c2b7', 'axes.labelcolor': '#52514e', 'xtick.color': '#52514e', 'ytick.color': '#52514e', 'text.color': '#0b0b0b'})

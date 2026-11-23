@@ -25,7 +25,7 @@ The split of Section 3.2 of the post gives four factors, client, reuse, engine a
 Section 3.3 of the post is this procedure applied once; the scripts below are what ran it.
 
 ## Scripts, by step
-Everything used for the post, arranged by the four steps of its Section 4. Paths below are relative to this folder. Set `KUBE_CONTEXT` (and `NAMESPACE`, default `kv-fleet`) before running anything that talks to a cluster.
+The raw run data is published beside the scripts: `results/raw/` holds a compact per-request record of every request in the nine runs and the engine counters sampled over their windows, with pod names replaced by aliases (see `results/raw/README.md`). `analysis/round2_inputs.py` reads them when the harness output is not present, so the ceiling, η and the four-factor split can be recomputed from this folder alone. Everything used for the post, arranged by the four steps of its Section 4. Paths below are relative to this folder. Set `KUBE_CONTEXT` (and `NAMESPACE`, default `kv-fleet`) before running anything that talks to a cluster.
 
 ## 1. Characterise the trace
 
